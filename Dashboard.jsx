@@ -21,19 +21,43 @@ import Chart from "react-apexcharts";
 //
 //       VITE_SHEETS_API_KEY=sua_chave_aqui
 //       VITE_SPREADSHEET_ID=seu_id_aqui
-//       VITE_SHEET_NAME=resultado
-//       VITE_GEMINI_API_KEY=sua_chave_aqui
+//
+//       # Fly / Atlas
+//       VITE_GEMINI_API_KEY_FLY=sua_chave_fly
+//       VITE_SHEET_NAME_FLY=resultado
+//
+//       # Valoriza
+//       VITE_GEMINI_API_KEY_VALORIZA=sua_chave_valoriza
+//       VITE_SHEET_NAME_VALORIZA=valoriza
 //
 //     Acesse com: import.meta.env.VITE_NOME_DA_VARIAVEL
 // =============================================================================
 
 const SHEETS_API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "AIzaSyAOcJU0bourcAH-rw-zIkQLI_oOo79H9bk";
 const SPREADSHEET_ID = import.meta.env.VITE_SPREADSHEET_ID || "1Ne5pMhMk0eXnZt9n6whQJi2BD9weUTo40INFHK5zUus";
-const SHEET_NAME     = import.meta.env.VITE_SHEET_NAME     || "resultado";
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "AQ.Ab8RN6LhbAiy2mzUHKpmUvDkb0LIeCRe4C17-2P3Os6Z_eij1A";
 
-// Sistemas monitorados — adicione novos sistemas aqui
-const SYSTEMS = ["Fly", "Atlas"];
+// Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha
+const MODE_CONFIG = {
+  "Fly/Atlas": {
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_FLY      || "AQ.Ab8RN6LhbAiy2mzUHKpmUvDkb0LIeCRe4C17-2P3Os6Z_eij1A",
+    sheetName:  import.meta.env.VITE_SHEET_NAME_FLY          || "resultado",
+    systems:    ["Fly", "Atlas"],
+    label:      "Fly / Atlas",
+    colDate:    0,  // coluna A — única coluna de data na planilha Fly/Atlas
+    colComment: 1,  // coluna B — comentários
+  },
+  "Valoriza": {
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_VALORIZA || "AQ.Ab8RN6LhbAiy2mzUHKpmUvDkb0LIeCRe4C17-2P3Os6Z_eij1A",
+    sheetName:  import.meta.env.VITE_SHEET_NAME_VALORIZA     || "valoriza",
+    systems:    ["Valoriza"],
+    label:      "Valoriza",
+    colDate:    5,  // coluna F — "Resolvido" (número serial do Excel)
+    colComment: 7,  // coluna H — "Comentários" com PROBLEMA/AÇÃO/CATEGORIA
+  },
+};
+
+// Modo padrão ao abrir o dashboard
+const DEFAULT_MODE = "Fly/Atlas";
 
 // Configurações de análise em lote (análise SRE de causas/sugestões)
 const BATCH_SIZE     = 5;      // categorias por requisição Gemini
@@ -106,45 +130,96 @@ async function callGeminiMock(categories) {
   });
   return result;
 }
-// Lógica que transforma o texto do comentário em { sistema, categoria }.
+// =============================================================================
+// SEÇÃO 2 — CLASSIFICAÇÃO DE CHAMADOS
+//
+// Cada modo tem suas próprias regras de keyword e sistema padrão.
+// Novos modos podem ser adicionados criando uma entrada em CLASSIFIER_CONFIG.
 //
 // COMO ADICIONAR UMA NOVA REGRA:
-//   1. Adicione um objeto em KEYWORD_RULES abaixo.
-//   2. A ordem importa: a primeira regra que bater vence.
-//   3. Use `sistema: null` para herdar a detecção automática (Fly/Atlas).
+//   1. Localize o array "rules" do modo correto abaixo.
+//   2. Adicione um objeto { keywords, sistema, categoria }.
+//   3. A ordem importa — a primeira regra que bater vence.
+//   4. Se uma categoria nova surgir com o tempo, basta adicionar aqui.
 // =============================================================================
 
-const KEYWORD_RULES = [
-  { keywords: ["altitude", "decimal digit"],                             sistema: null,    categoria: "Erro de Tipo: Alfabetivo em Campo Altitude (SOI)"           },
-  { keywords: ["altura estrutura", "virgula", "vírgula"],                sistema: null,    categoria: "Erro de Sintaxe: Vírgula em Altura Estrutura (SOI)"          },
-  { keywords: ["distrito", "municipio", "município"],                    sistema: null,    categoria: "Divergência Cadastral: Distrito/Município ausente no Science" },
-  { keywords: ["object object", "<br>", "quebra de linha"],              sistema: null,    categoria: "Falha de Renderização: Caractere Especial no Endereço"        },
-  { keywords: ["mapa", "coordenadas", "latitude", "longitude"],          sistema: null,    categoria: "Erro de Indentação: Coordenada Positiva no Mapa"              },
-  { keywords: ["feign", "feignexception", "abrir sci"],                  sistema: null,    categoria: "Bloqueio de Integração: FCU Duplicada ao Disparar SCI"        },
-  { keywords: ["unique query", "empresa duplicada"],                     sistema: null,    categoria: "Duplicidade de Registro: Empresa Duplicada no VivoGo"         },
-  { keywords: ["subprocesso", "camunda", "modalidade em aberto"],        sistema: null,    categoria: "Violação de Regra BPM: Multiplas Modalidades na SOI"          },
-  { keywords: ["botão", "permissão", "keycloak"],                        sistema: null,    categoria: "Falha de Atribuição: Grupo Designado no Camunda Workflow"     },
-  { keywords: ["atlas"],                                                  sistema: "Atlas", categoria: "Suporte Atlas Geral"                                         },
-];
+const CLASSIFIER_CONFIG = {
+  // ── Fly / Atlas — erros técnicos de infraestrutura ──────────────────────────
+  "Fly/Atlas": {
+    detectSistema: (txt) => txt.includes("atlas") ? "Atlas" : "Fly",
+    defaultCategoria: "Suporte Operacional Técnico Geral",
+    rules: [
+      { keywords: ["altitude", "decimal digit"],              sistema: null,    categoria: "Erro de Tipo: Alfabetivo em Campo Altitude (SOI)"           },
+      { keywords: ["altura estrutura", "virgula", "vírgula"], sistema: null,    categoria: "Erro de Sintaxe: Vírgula em Altura Estrutura (SOI)"          },
+      { keywords: ["distrito", "municipio", "município"],     sistema: null,    categoria: "Divergência Cadastral: Distrito/Município ausente no Science" },
+      { keywords: ["object object", "<br>", "quebra de linha"],sistema: null,   categoria: "Falha de Renderização: Caractere Especial no Endereço"        },
+      { keywords: ["mapa", "coordenadas", "latitude", "longitude"], sistema: null, categoria: "Erro de Indentação: Coordenada Positiva no Mapa"           },
+      { keywords: ["feign", "feignexception", "abrir sci"],   sistema: null,    categoria: "Bloqueio de Integração: FCU Duplicada ao Disparar SCI"        },
+      { keywords: ["unique query", "empresa duplicada"],      sistema: null,    categoria: "Duplicidade de Registro: Empresa Duplicada no VivoGo"         },
+      { keywords: ["subprocesso", "camunda", "modalidade em aberto"], sistema: null, categoria: "Violação de Regra BPM: Multiplas Modalidades na SOI"     },
+      { keywords: ["botão", "permissão", "keycloak"],         sistema: null,    categoria: "Falha de Atribuição: Grupo Designado no Camunda Workflow"     },
+      { keywords: ["atlas"],                                  sistema: "Atlas", categoria: "Suporte Atlas Geral"                                         },
+    ],
+  },
 
-const DEFAULT_CATEGORIA = "Suporte Operacional Técnico Geral";
+  // ── Valoriza — benefícios e parceiros do App Vivo ───────────────────────────
+  // Categorias baseadas nos chamados reais do sistema Valoriza.
+  // Quando novas categorias surgirem, adicione novas regras aqui.
+  "Valoriza": {
+    detectSistema: () => "Valoriza", // Valoriza é sistema único — sem subdivisão
+    defaultCategoria: "Valoriza — Geral",
+    rules: [
+      // Resgate e navegação no App Vivo
+      { keywords: ["como resgat", "como habilit", "como ativ", "caminho", "app vivo → benefícios"], sistema: "Valoriza", categoria: "Dúvida de Resgate — App Vivo"              },
+      { keywords: ["chamado indevido", "nao se refere ao valoriza", "fila correta"],                 sistema: "Valoriza", categoria: "Chamado Indevido — Redirecionamento"         },
+      // Perplexity
+      { keywords: ["perplexity", "perplexity pro", "conta pausada", "cartão de crédito perplexity"], sistema: "Valoriza", categoria: "Perplexity — Conta Pausada / Validação"    },
+      { keywords: ["perplexity", "descontinuado", "encerrado", "não está disponível"],               sistema: "Valoriza", categoria: "Perplexity — Benefício Descontinuado"       },
+      // Cinemark e parceiros
+      { keywords: ["cinemark", "cpf cinemark"],                                                      sistema: "Valoriza", categoria: "Cinemark — Problema com CPF/Voucher"        },
+      { keywords: ["voucher", "site parceiro", "carregamento de voucher"],                           sistema: "Valoriza", categoria: "Site Parceiro — Falha no Voucher"            },
+      // Vale Bônus
+      { keywords: ["vale bonus", "vale bônus", "saldo do bonus"],                                    sistema: "Valoriza", categoria: "Vale Bônus — Validação com Terceiro"        },
+      // Vivo Easy / MVE
+      { keywords: ["vivo easy"],                                                                     sistema: "Valoriza", categoria: "Chamado Indevido — Vivo Easy"               },
+      { keywords: ["mve", "meu vivo empresa", "vivo empresa"],                                       sistema: "Valoriza", categoria: "Chamado Indevido — MVE"                     },
+      // Benefícios
+      { keywords: ["clusterizado", "clusterizados", "elegibilidade", "grupo específico"],            sistema: "Valoriza", categoria: "Benefício Clusterizado — Elegibilidade"     },
+      { keywords: ["esgotado", "esgotamento", "não está mais disponível", "sem estoque"],            sistema: "Valoriza", categoria: "Benefício Esgotado"                         },
+      { keywords: ["falta de informação", "mais detalhes", "envio de print", "evidências"],          sistema: "Valoriza", categoria: "Chamado Incompleto — Falta de Evidência"    },
+      { keywords: ["data incorreta", "data da reward", "correção da data"],                          sistema: "Valoriza", categoria: "Erro de Data na Descrição do Benefício"     },
+    ],
+  },
+};
 
-function classificarComentario(texto) {
-  const txt    = (texto || "").toLowerCase();
-  const sistema = txt.includes("atlas") ? "Atlas" : "Fly";
+/**
+ * Classifica um comentário de chamado para o modo especificado.
+ * Prioridade: 1) tag CATEGORIA: explícita → 2) keyword → 3) default do modo
+ *
+ * @param {string} texto  - Texto do comentário
+ * @param {string} mode   - "Fly/Atlas" | "Valoriza"
+ * @returns {{ sistema: string, categoria: string }}
+ */
+function classificarComentario(texto, mode) {
+  const cfg = CLASSIFIER_CONFIG[mode] || CLASSIFIER_CONFIG["Fly/Atlas"];
+  const txt = (texto || "").toLowerCase();
+  const sistema = cfg.detectSistema(txt);
 
+  // Prioridade 1: tag explícita CATEGORIA: no texto
   const catMatch = texto.match(/CATEGORIA:\s*([^\n\r"]+)/i);
   if (catMatch && catMatch[1].trim().length > 1) {
     return { sistema, categoria: catMatch[1].trim() };
   }
 
-  for (const rule of KEYWORD_RULES) {
-    if (rule.keywords.some((kw) => txt.includes(kw))) {
+  // Prioridade 2: primeira regra de keyword que bater
+  for (const rule of cfg.rules) {
+    if (rule.keywords.some((kw) => txt.includes(kw.toLowerCase()))) {
       return { sistema: rule.sistema ?? sistema, categoria: rule.categoria };
     }
   }
 
-  return { sistema, categoria: DEFAULT_CATEGORIA };
+  // Prioridade 3: categoria padrão do modo
+  return { sistema, categoria: cfg.defaultCategoria };
 }
 
 // =============================================================================
@@ -154,7 +229,12 @@ function classificarComentario(texto) {
 // A IA usa apenas o período selecionado pelo filtro — controlado em tempo real.
 // =============================================================================
 
-async function fetchSheetData() {
+/**
+ * Busca os dados da planilha para o modo selecionado.
+ * Usa a aba e o classificador corretos para cada modo.
+ * @param {string} mode - "Fly/Atlas" | "Valoriza"
+ */
+async function fetchSheetData(mode) {
   if (!SHEETS_API_KEY || !SPREADSHEET_ID) {
     throw new Error(
       "Variáveis de ambiente não configuradas. " +
@@ -162,9 +242,14 @@ async function fetchSheetData() {
     );
   }
 
+  const cfg       = MODE_CONFIG[mode] || MODE_CONFIG[DEFAULT_MODE];
+  const sheetName = cfg.sheetName;
+  const colDate   = cfg.colDate   ?? 0;
+  const colComment = cfg.colComment ?? 1;
+
   const url =
     `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}` +
-    `/values/${encodeURIComponent(SHEET_NAME)}?key=${SHEETS_API_KEY}`;
+    `/values/${encodeURIComponent(sheetName)}?key=${SHEETS_API_KEY}`;
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -177,14 +262,18 @@ async function fetchSheetData() {
   const data = {};
 
   rows.forEach((row, idx) => {
-    const rawDate    = row[0];
-    const comentario = String(row[1] || "").trim();
+    const rawDate    = row[colDate];
+    const comentario = String(row[colComment] || "").trim();
     if (!rawDate || !comentario) return;
 
-    const date = new Date(rawDate);
-    if (isNaN(date.getTime())) return;
+    // Suporta dois formatos de data:
+    // 1. Número serial do Excel (ex: 46189.59) — usado pelo Valoriza
+    // 2. String de data legível (ex: "16/06/2026 14:28:18") — usado pelo Fly/Atlas
+    const date = parseDate(rawDate);
+    if (!date) return;
 
-    const { sistema, categoria } = classificarComentario(comentario);
+    // Classifica usando as regras do modo ativo
+    const { sistema, categoria } = classificarComentario(comentario, mode);
     const ticket = { id: `#${idx + 1}`, date, system: sistema, category: categoria, description: comentario };
 
     if (!data[sistema])            data[sistema] = {};
@@ -193,6 +282,42 @@ async function fetchSheetData() {
   });
 
   return data;
+}
+
+/**
+ * Converte qualquer formato de data suportado pelas planilhas para um objeto Date.
+ * Retorna null se não conseguir converter.
+ *
+ * Formatos suportados:
+ *   - Número serial do Excel: 46189.59 (dias desde 30/12/1899)
+ *   - String de data BR: "16/06/2026 14:28:18" ou "16/06/2026"
+ *   - String ISO: "2026-06-16T14:28:18"
+ */
+function parseDate(raw) {
+  if (!raw) return null;
+
+  const num = Number(raw);
+
+  // Número serial do Excel (valores típicos entre 40000 e 50000 = anos 2009–2036)
+  if (!isNaN(num) && num > 40000 && num < 55000) {
+    // Fórmula: dias desde 30/12/1899, com correção do bug do ano 1900 do Excel
+    const ms = (num - 25569) * 86400 * 1000;
+    const d  = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Tenta string no formato BR "dd/mm/yyyy hh:mm:ss" ou "dd/mm/yyyy"
+  const str = String(raw).trim();
+  const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?/);
+  if (brMatch) {
+    const [, dd, mm, yyyy, hh = "0", mi = "0", ss = "0"] = brMatch;
+    const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Fallback: tenta parse nativo (ISO, etc.)
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 // =============================================================================
@@ -204,21 +329,28 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
 
 // ── Helper de retry ───────────────────────────────────────────────────────────
 
-async function callGemini(promptText) {
-  if (!GEMINI_API_KEY) {
-    throw new Error("VITE_GEMINI_API_KEY não configurada. Adicione a chave no arquivo .env.");
+/**
+ * Faz uma chamada ao Gemini usando a chave específica do modo ativo.
+ * @param {string} promptText
+ * @param {string} geminiKey  - chave da API do modo (Fly/Atlas ou Valoriza)
+ */
+async function callGemini(promptText, geminiKey) {
+  if (!geminiKey) {
+    throw new Error(
+      "Chave Gemini não configurada para este modo. " +
+      "Verifique VITE_GEMINI_API_KEY_FLY ou VITE_GEMINI_API_KEY_VALORIZA no .env."
+    );
   }
 
   const body = JSON.stringify({
     contents: [{ parts: [{ text: promptText }] }],
-    // Limita o tamanho da resposta para evitar JSON truncado
     generationConfig: { maxOutputTokens: 2048 },
   });
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const response = await fetch(GEMINI_URL, {
       method:  "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
       body,
     });
 
@@ -286,7 +418,7 @@ function parseGeminiJSON(text) {
 
 // ── 4A: Análise SRE (causa raiz / sugestão / prioridade) ─────────────────────
 
-function buildAnalysisPrompt(system, categories) {
+function buildAnalysisPrompt(mode, system, categories) {
   const payload = categories.map((c) => ({
     id_categoria:      c.name,
     contexto_real:     c.samples.slice(0, 3).join(" | "),
@@ -294,6 +426,49 @@ function buildAnalysisPrompt(system, categories) {
     ultimos_30_dias:   c.last30,
   }));
 
+  const jsonBlock = JSON.stringify(payload, null, 2);
+  const retorno = `RETORNE APENAS O OBJETO JSON PURO, SEM MARKDOWN, SEM TEXTO EXTRA, NESTE FORMATO EXATO:
+{
+  "Nome_da_Categoria": {
+    "titulo": "...",
+    "motivo": "...",
+    "sugestao": "...",
+    "prioridade": "..."
+  }
+}
+IMPORTANTE: Use exatamente o valor de "id_categoria" como chave do objeto de retorno.`;
+
+  if (mode === "Valoriza") {
+    return `Você é um especialista em operações do programa Vivo Valoriza — plataforma de benefícios do App Vivo para clientes dos planos Vivo Total.
+
+CONTEXTO DO SISTEMA VALORIZA:
+- O Valoriza oferece benefícios de parceiros (Perplexity, Cinemark, Vale Bônus, etc.) resgatáveis pelo App Vivo
+- Os chamados são abertos por analistas de suporte ao relatar problemas de clientes
+- Cada chamado tem: PROBLEMA REPORTADO, AÇÃO REALIZADA, CATEGORIA
+- Chamados "indevidos" são de outros sistemas (Vivo Easy, MVE) que chegaram na fila errada
+- Benefícios podem ser: clusterizados (só para públicos específicos), esgotados, descontinuados ou com problema no site parceiro
+- O path de resgate padrão: App Vivo → Benefícios → Vivo Valoriza → Buscar Parceiros
+
+TERMINOLOGIA IMPORTANTE:
+- "Benefício clusterizado": disponível apenas para segmentos específicos de clientes
+- "Benefício esgotado": acabaram as cotas disponíveis na campanha
+- "Benefício descontinuado": parceria encerrada permanentemente
+- "Voucher no site parceiro": código de desconto gerado pelo Valoriza para uso no site do parceiro
+- "Vale Bônus": serviço de terceiro que aparece integrado no Valoriza
+
+Analise os chamados recorrentes do sistema Valoriza e para cada categoria retorne OBRIGATORIAMENTE os 4 campos:
+1. "titulo": Nome resumido do problema (máx 6 palavras), direto ao ponto
+2. "motivo": Causa mais provável com base no padrão dos chamados (2-3 frases). Seja específico ao contexto do Valoriza — não use linguagem de infraestrutura técnica
+3. "sugestao": Ação concreta para reduzir a reincidência (2-3 frases). Pode ser: melhoria de comunicação, ajuste no fluxo do app, criação de FAQ, automação de resposta, ou melhoria no processo de triagem
+4. "prioridade": "Alta" (impacta muitos clientes ou bloqueia uso), "Média" (recorrente mas contornável), "Baixa" (pontual ou redirecionamento simples)
+
+DADOS DAS CATEGORIAS:
+${jsonBlock}
+
+${retorno}`;
+  }
+
+  // Prompt padrão para Fly / Atlas — contexto técnico SRE
   return `Você é um Engenheiro de Confiabilidade de Sistemas (SRE) e Especialista ITIL Sênior do Ecossistema Vivo ${system}.
 
 O sistema ${system} gerencia infraestrutura core da Vivo (antenas, Camunda BPM, Angular 14, Spring Boot).
@@ -305,19 +480,9 @@ Analise os chamados recorrentes abaixo e para cada categoria retorne OBRIGATORIA
 4. "prioridade": exatamente "Alta", "Média" ou "Baixa"
 
 DADOS DAS CATEGORIAS:
-${JSON.stringify(payload, null, 2)}
+${jsonBlock}
 
-RETORNE APENAS O OBJETO JSON PURO, SEM MARKDOWN, SEM TEXTO EXTRA, NESTE FORMATO EXATO:
-{
-  "Nome_da_Categoria": {
-    "titulo": "...",
-    "motivo": "...",
-    "sugestao": "...",
-    "prioridade": "..."
-  }
-}
-
-IMPORTANTE: Use exatamente o valor de "id_categoria" como chave do objeto de retorno.`;
+${retorno}`;
 }
 
 /**
@@ -329,23 +494,36 @@ IMPORTANTE: Use exatamente o valor de "id_categoria" como chave do objeto de ret
  * Esta função detecta esse caso e encapsula corretamente.
  */
 function normalizeAnalysisResult(result, categoryName) {
-  // Caso 1: formato correto { "NomeCategoria": { titulo, motivo, ... } }
-  if (result[categoryName]) return result[categoryName];
+  if (!result || typeof result !== "object") return null;
 
-  // Caso 2: resposta com chave diferente mas estrutura correta
-  const firstVal = result[Object.keys(result)[0]];
-  if (firstVal && typeof firstVal === "object" && firstVal.motivo) return firstVal;
+  // Caso 1: chave exata da categoria
+  if (result[categoryName]?.motivo) return result[categoryName];
 
-  // Caso 3: Gemini retornou a análise diretamente no nível raiz
+  // Caso 2: o resultado JÁ É a análise diretamente (nível raiz)
   // ex: { "titulo": "...", "motivo": "...", "sugestao": "...", "prioridade": "..." }
   if (result.motivo && result.sugestao) return result;
 
-  // Caso 4: não reconheceu o formato — retorna o que veio para não perder dados
-  return firstVal || result;
+  // Caso 3: varre todas as chaves buscando um objeto com motivo preenchido
+  for (const val of Object.values(result)) {
+    if (val && typeof val === "object" && val.motivo && val.sugestao) return val;
+  }
+
+  // Caso 4: retorna a primeira chave mesmo sem motivo (Gemini retornou algo parcial)
+  const firstVal = result[Object.keys(result)[0]];
+  if (firstVal && typeof firstVal === "object") return firstVal;
+
+  return null;
 }
 
-async function callGeminiForAnalysis(system, categories) {
-  return callGemini(buildAnalysisPrompt(system, categories));
+/**
+ * Chama o Gemini para análise SRE/Valoriza das categorias.
+ * @param {string} mode
+ * @param {string} system
+ * @param {Array}  categories
+ * @param {string} geminiKey
+ */
+async function callGeminiForAnalysis(mode, system, categories, geminiKey) {
+  return callGemini(buildAnalysisPrompt(mode, system, categories), geminiKey);
 }
 
 // =============================================================================
@@ -511,9 +689,10 @@ function PriorityBadge({ priority }) {
 
 // ── FilterPanel ───────────────────────────────────────────────────────────────
 
-function FilterPanel({ filters, onChange, onReset, allCategories }) {
-  const bg     = useColorModeValue("gray.50", "gray.900");
-  const border = useColorModeValue("gray.200", "gray.700");
+function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, onModeChange, systems }) {
+  const bg        = useColorModeValue("gray.50", "gray.900");
+  const border    = useColorModeValue("gray.200", "gray.700");
+  const modeCfg   = MODE_CONFIG[activeMode];
   return (
     <Box bg={bg} borderRadius="xl" p="5" mb="6" borderWidth="1px" borderColor={border}>
       <Flex align="center" mb="4" gap="2">
@@ -525,11 +704,26 @@ function FilterPanel({ filters, onChange, onReset, allCategories }) {
         </Button>
       </Flex>
       <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing="4">
+
+        {/* Seletor de Modo — controla qual sistema/planilha/IA é usado */}
+        <FormControl>
+          <FormLabel fontSize="xs" color="gray.500">Modo do Sistema</FormLabel>
+          <Select
+            size="sm" borderRadius="lg" value={activeMode}
+            onChange={(e) => onModeChange(e.target.value)}
+            fontWeight="600" color="purple.600"
+          >
+            {Object.keys(MODE_CONFIG).map((m) => (
+              <option key={m} value={m}>{MODE_CONFIG[m].label}</option>
+            ))}
+          </Select>
+        </FormControl>
+
         <FormControl>
           <FormLabel fontSize="xs" color="gray.500">Sistema</FormLabel>
           <Select size="sm" borderRadius="lg" value={filters.system} onChange={(e) => onChange("system", e.target.value)}>
             <option value="">Todos</option>
-            {SYSTEMS.map((s) => <option key={s} value={s}>{s}</option>)}
+            {systems.map((s) => <option key={s} value={s}>{s}</option>)}
           </Select>
         </FormControl>
         <FormControl>
@@ -745,8 +939,8 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
 
 // ── OverviewCharts ────────────────────────────────────────────────────────────
 
-function OverviewCharts({ data }) {
-  const systemsToShow = SYSTEMS.filter((s) => data[s]);
+function OverviewCharts({ data, systems }) {
+  const systemsToShow = systems.filter((s) => data[s]);
 
   // Gráfico de barras: top categorias por volume total (histórico completo)
   const volumeByCategory = useMemo(() => {
@@ -842,6 +1036,7 @@ const INITIAL_FILTERS = { system: "", category: "", period: "90", priority: "" }
 
 export default function VivoDashboard() {
   // ── Estado ──────────────────────────────────────────────────────────────────
+  const [activeMode,      setActiveMode]      = useState(DEFAULT_MODE); // "Fly/Atlas" | "Valoriza"
   const [data,            setData]            = useState({});
   const [sheetLoading,    setSheetLoading]    = useState(false);
   const [sheetError,      setSheetError]      = useState(null);
@@ -859,6 +1054,8 @@ export default function VivoDashboard() {
 
   // ── Derivados ────────────────────────────────────────────────────────────────
 
+  // Sistemas disponíveis dependem do modo ativo
+  const SYSTEMS         = MODE_CONFIG[activeMode]?.systems || ["Fly", "Atlas"];
   const filteredSystems = filters.system ? [filters.system] : SYSTEMS;
 
   const allCategories = useMemo(() => {
@@ -912,7 +1109,7 @@ export default function VivoDashboard() {
     setSheetLoading(true);
     setSheetError(null);
     try {
-      const result = await fetchSheetData();
+      const result = await fetchSheetData(activeMode);
       setData(result);
       setLastSync(new Date().toLocaleString("pt-BR"));
       const total = Object.values(result).reduce(
@@ -930,13 +1127,18 @@ export default function VivoDashboard() {
     } finally {
       setSheetLoading(false);
     }
-  }, [toast]);
+  }, [activeMode, toast]);
 
-  // Roteador de análise: usa mock ou Gemini real dependendo do estado mockMode
+  // Roteador de análise: usa mock ou Gemini real dependendo do estado mockMode.
+  // Passa a chave Gemini correta para o modo ativo — cada modo consome tokens separados.
   const analyzeCategories = useCallback(
-    (system, categories) =>
-      mockMode ? callGeminiMock(categories) : callGeminiForAnalysis(system, categories),
-    [mockMode]
+    (system, categories) => {
+      const geminiKey = MODE_CONFIG[activeMode]?.geminiKey || "";
+      return mockMode
+        ? callGeminiMock(categories)
+        : callGeminiForAnalysis(activeMode, system, categories, geminiKey);
+    },
+    [mockMode, activeMode]
   );
 
   const requestAnalysis = useCallback(async (system, categoryName) => {
@@ -965,7 +1167,9 @@ export default function VivoDashboard() {
         total:   ticketsNoPeriodo.length,
         last30:  countInRange(ticketsNoPeriodo, 30),
       }]);
+      console.log("[DEBUG] Gemini result:", JSON.stringify(result, null, 2));
       const analysis = normalizeAnalysisResult(result, categoryName);
+      console.log("[DEBUG] Normalized analysis:", JSON.stringify(analysis, null, 2));
       setAnalyses((prev) => ({ ...prev, [key]: analysis }));
       toast({ title: "Análise concluída", description: categoryName.substring(0, 50) + "…", status: "success", duration: 3000 });
     } catch (e) {
@@ -1236,6 +1440,16 @@ export default function VivoDashboard() {
   const handleFilterChange = useCallback((key, value) => setFilters((f) => ({ ...f, [key]: value })), []);
   const handleFilterReset  = useCallback(() => setFilters(INITIAL_FILTERS), []);
 
+  // Ao trocar de modo: limpa dados, análises e filtros para evitar mistura entre sistemas
+  const handleModeChange = useCallback((newMode) => {
+    setActiveMode(newMode);
+    setData({});
+    setAnalyses({});
+    setFilters(INITIAL_FILTERS);
+    setLastSync(null);
+    setSheetError(null);
+  }, []);
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
@@ -1249,7 +1463,12 @@ export default function VivoDashboard() {
               <Text color="white" fontWeight="800" fontSize="14px">V</Text>
             </Box>
             <Box>
-              <Text fontWeight="700" fontSize="lg" lineHeight="1.2">Vivo SRE Dashboard</Text>
+              <Flex align="center" gap="2">
+                <Text fontWeight="700" fontSize="lg" lineHeight="1.2">Vivo SRE Dashboard</Text>
+                <Badge colorScheme="purple" borderRadius="full" fontSize="10px">
+                  {MODE_CONFIG[activeMode]?.label}
+                </Badge>
+              </Flex>
               <Text fontSize="11px" color="gray.500">
                 {lastSync ? `Última sincronização: ${lastSync}` : "Planilha não carregada"}
               </Text>
@@ -1345,13 +1564,16 @@ export default function VivoDashboard() {
           onChange={handleFilterChange}
           onReset={handleFilterReset}
           allCategories={allCategories}
+          activeMode={activeMode}
+          onModeChange={handleModeChange}
+          systems={SYSTEMS}
         />
 
         <SimpleGrid columns={{ base: 2, md: 4 }} spacing="4" mb="6">
           <StatCard label="Total de chamados"      value={totalTickets.toLocaleString("pt-BR")} color="purple" />
           <StatCard label="Últimos 30 dias"        value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="blue" />
           <StatCard label="Categorias ativas"      value={filteredCards.length} color="teal" />
-          <StatCard label="Categorias analisadas"  value={`${analysedCount}/${filteredCards.length}`} color="orange" />
+          <StatCard label={`${MODE_CONFIG[activeMode]?.label} — Analisadas`} value={`${analysedCount}/${filteredCards.length}`} color="orange" />
         </SimpleGrid>
 
         <Tabs colorScheme="purple" variant="soft-rounded" defaultIndex={0}>
@@ -1362,7 +1584,7 @@ export default function VivoDashboard() {
 
           <TabPanels>
             <TabPanel px="0">
-              <OverviewCharts data={data} />
+              <OverviewCharts data={data} systems={SYSTEMS} />
             </TabPanel>
 
             <TabPanel px="0">
