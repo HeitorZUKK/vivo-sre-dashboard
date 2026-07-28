@@ -680,7 +680,9 @@ function parseDate(raw) {
 // Análise SRE: envia categorias e retorna causa raiz, sugestão e prioridade.
 // =============================================================================
 
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+// gemini-flash-latest é um alias que sempre aponta para a versão Flash mais
+// recente disponível — evita quebrar quando o Google descontinua modelos antigos.
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
 
 // ── Helper de retry ───────────────────────────────────────────────────────────
 
