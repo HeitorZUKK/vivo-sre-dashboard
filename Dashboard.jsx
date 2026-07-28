@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import {
   Box, Flex, Heading, Text, Button, Select,
   Badge, Divider, Spinner, useColorModeValue,
@@ -39,7 +39,7 @@ const SPREADSHEET_ID = import.meta.env.VITE_SPREADSHEET_ID || "1Ne5pMhMk0eXnZt9n
 // Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha
 const MODE_CONFIG = {
   "Fly/Atlas": {
-    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_FLY      || "AQ.Ab8RN6LhbAiy2mzUHKpmUvDkb0LIeCRe4C17-2P3Os6Z_eij1A",
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_FLY      || "AIzaSyCR941fZ-srssfe2VB5Iu3A7pv6JlB66JY",
     sheetName:  import.meta.env.VITE_SHEET_NAME_FLY          || "resultado",
     systems:    ["Fly", "Atlas"],
     label:      "Fly / Atlas",
@@ -47,7 +47,7 @@ const MODE_CONFIG = {
     colComment: 1,  // coluna B — comentários
   },
   "Valoriza": {
-    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_VALORIZA || "AQ.Ab8RN6LhbAiy2mzUHKpmUvDkb0LIeCRe4C17-2P3Os6Z_eij1A",
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_VALORIZA || "AIzaSyCR941fZ-srssfe2VB5Iu3A7pv6JlB66JY",
     sheetName:  import.meta.env.VITE_SHEET_NAME_VALORIZA     || "valoriza",
     systems:    ["Valoriza"],
     label:      "Valoriza",
@@ -60,8 +60,10 @@ const MODE_CONFIG = {
 const DEFAULT_MODE = "Fly/Atlas";
 
 // Configurações de análise em lote (análise SRE de causas/sugestões)
-const BATCH_SIZE     = 5;      // categorias por requisição Gemini
-const BATCH_DELAY_MS = 10_000; // pausa entre lotes (ms) — respeita rate limit
+// Análise em lote — agora processa 1 categoria por requisição (ver requestBulkAnalysis).
+// Estas constantes ficaram obsoletas mas são mantidas para referência/ajuste futuro.
+const BATCH_SIZE     = 1;      // categorias por requisição (1 = sem ambiguidade de matching)
+const BATCH_DELAY_MS = 2_500;  // pausa entre requisições (ms) — respeita rate limit
 const MAX_RETRIES    = 3;      // tentativas em caso de erro 429/503
 const RETRY_DELAY_MS = 15_000; // espera base entre tentativas (ms)
 
@@ -208,7 +210,10 @@ function classificarComentario(texto, mode) {
   // Prioridade 1: tag explícita CATEGORIA: no texto
   const catMatch = texto.match(/CATEGORIA:\s*([^\n\r"]+)/i);
   if (catMatch && catMatch[1].trim().length > 1) {
-    return { sistema, categoria: catMatch[1].trim() };
+    const categoriaRaw = catMatch[1].trim();
+    // Normaliza para evitar duplicatas por variação de escrita
+    const categoriaNorm = normalizarCategoria(categoriaRaw, mode);
+    return { sistema, categoria: categoriaNorm };
   }
 
   // Prioridade 2: primeira regra de keyword que bater
@@ -223,7 +228,353 @@ function classificarComentario(texto, mode) {
 }
 
 // =============================================================================
-// SEÇÃO 3 — GOOGLE SHEETS API
+// SEÇÃO 2B — NORMALIZAÇÃO DE CATEGORIAS
+//
+// Unifica variações de escrita em um nome canônico único.
+// Isso evita que "Deleção de Linhas", "Deleção de linhas" e
+// "Deleção linhas OMNI" virem três categorias separadas.
+//
+// COMO FUNCIONA:
+//   1. Tenta casar com os ALIASES explícitos (mapeamento exato após normalização)
+//   2. Se não casar, aplica normalização automática de texto
+//
+// COMO ADICIONAR UMA NOVA CATEGORIA:
+//   Adicione uma entrada em CATEGORY_ALIASES abaixo.
+//   A chave é o texto normalizado (minúsculas, sem acento, sem pontuação).
+//   O valor é o nome canônico que aparecerá no dashboard.
+// =============================================================================
+
+// Remove acentos, pontuação e converte para minúsculas
+function normText(str) {
+  return (str || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[^a-z0-9\s]/g, " ")                    // remove pontuação
+    .replace(/\b(de|da|do|dos|das|em|para|com|no|na|o|a|e|um|uma)\b/g, "") // stopwords
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Mapa de aliases por modo.
+ * Chave: texto normalizado (via normText) de qualquer variação conhecida.
+ * Valor: nome canônico que aparece no dashboard.
+ *
+ * Para Fly/Atlas, os nomes canônicos seguem a legenda fornecida.
+ * Novas categorias que surgirem podem ser adicionadas aqui.
+ */
+const CATEGORY_ALIASES = {
+  "Fly/Atlas": {
+    // VENDOR
+    "impossibilitando vendor":    "IMPOSSIBILITANDO VENDOR",
+    "vendor impossibilitado":     "IMPOSSIBILITANDO VENDOR",
+    "vendor bloqueado":           "IMPOSSIBILITANDO VENDOR",
+    "grupo vendor":               "GRUPO VENDOR",
+    "vendor grupo":               "GRUPO VENDOR",
+    "cancelar vendor":            "CANCELAR VENDOR",
+    "cancelamento vendor":        "CANCELAR VENDOR",
+    "vendor cancelar":            "CANCELAR VENDOR",
+    // CANDIDATO
+    "candidato":                  "CANDIDATO",
+    "editar endereco candidato":  "CANDIDATO",
+    "correcao coordenadas":       "CANDIDATO",
+    "coordenadas candidato":      "CANDIDATO",
+    "mudanca candidato":          "CANDIDATO",
+    // ALTURA
+    "altura":                     "ALTURA",
+    "altura errada":              "ALTURA",
+    "altura incorreta":           "ALTURA",
+    "altura estrutura":           "ALTURA",
+    // STATUS SOI
+    "status soi":                 "STATUS SOI",
+    "mudanca status soi":         "STATUS SOI",
+    "alteracao status soi":       "STATUS SOI",
+    "status da soi":              "STATUS SOI",
+    // CANCELAMENTOS
+    "cancelar candidato":         "CANCELAR CANDIDATO",
+    "cancelamento candidato":     "CANCELAR CANDIDATO",
+    "cancelar soi":               "CANCELAR SOI",
+    "cancelamento soi":           "CANCELAR SOI",
+    "cancelar fcu":               "CANCELAR FCU",
+    "cancelamento fcu":           "CANCELAR FCU",
+    "fcu nula":                   "CANCELAR FCU",
+    "fcu null":                   "CANCELAR FCU",
+    // REGREDIR
+    "regredir candidato":         "REGREDIR CANDIDATO",
+    "regressao candidato":        "REGREDIR CANDIDATO",
+    "regredir state":             "REGREDIR CANDIDATO",
+    // NOME SOI
+    "nome soi":                   "NOME SOI",
+    "correcao nome soi":          "NOME SOI",
+    "nome incorreto soi":         "NOME SOI",
+    // E-MAIL
+    "email":                      "E-MAIL",
+    "e mail":                     "E-MAIL",
+    "anexar email":               "E-MAIL",
+    "email fcu":                  "E-MAIL",
+    // REJEITAR
+    "rejeitar":                   "REJEITAR",
+    "rejeicao candidato":         "REJEITAR",
+    "rejeitar candidato":         "REJEITAR",
+    // DETENTORA
+    "detentora":                  "DETENTORA",
+    "id detentora":               "DETENTORA",
+    "alteracao detentora":        "DETENTORA",
+    // STAGE SCI (específico — antes de SCI genérico)
+    "stage sci":                  "STAGE SCI",
+    "alteracao stage sci":        "STAGE SCI",
+    "stage camunda":              "STAGE SCI",
+    "stage da sci":               "STAGE SCI",
+    // VALOR FCU (específico — antes de CANCELAR FCU e FCU genérico)
+    "valor fcu":                  "VALOR FCU",
+    "valores fcu":                "VALOR FCU",
+    "inserir valor fcu":          "VALOR FCU",
+    "mudanca valor fcu":          "VALOR FCU",
+    "alteracao valor fcu":        "VALOR FCU",
+    // DELEÇÃO OMNI
+    "delecao omni":               "DELEÇÃO OMNI",
+    "delecao linhas omni":        "DELEÇÃO OMNI",
+    "deletar linhas omni":        "DELEÇÃO OMNI",
+    "deleção omni":               "DELEÇÃO OMNI",
+    "delecao linhas":             "DELEÇÃO OMNI",
+    "deleção linhas":             "DELEÇÃO OMNI",
+    "deletar linha":              "DELEÇÃO OMNI",
+    "deletar linhas":             "DELEÇÃO OMNI",
+    "remover linha":              "DELEÇÃO OMNI",
+    // RELATÓRIO
+    "relatorio":                  "RELATÓRIO",
+    "mudanca dados processo":     "RELATÓRIO",
+    "correcao dados processo":    "RELATÓRIO",
+    // SCI genérico (por último — só bate se não caiu em STAGE SCI/VALOR FCU acima)
+    "sci":                        "SCI",
+    "mudanca sci":                "SCI",
+    "insercao sci":               "SCI",
+    "dados sci":                  "SCI",
+    // SOI genérico (por último — só bate se não caiu em STATUS/NOME/CANCELAR SOI)
+    "soi":                        "SOI",
+    "mudanca soi":                "SOI",
+    "soi banco":                  "SOI",
+  },
+  "Valoriza": {}, // Valoriza usa keywords — adicionar aliases aqui se necessário
+};
+
+/**
+ * Normaliza uma categoria para seu nome canônico.
+ * Se não encontrar alias, aplica capitalização padronizada.
+ *
+ * @param {string} categoria - Texto bruto da categoria (vindo da tag CATEGORIA:)
+ * @param {string} mode      - "Fly/Atlas" | "Valoriza"
+ * @returns {string}         - Nome canônico padronizado
+ */
+// Registro de categorias canônicas já vistas nesta sessão de carregamento.
+// Usado para unificar variações não mapeadas via similaridade textual.
+let _canonicasVistas = [];
+
+// Reseta o registro — chamado no início de cada carregamento de planilha
+function resetCanonicas() {
+  _canonicasVistas = [];
+}
+
+/**
+ * Calcula similaridade entre duas strings normalizadas (0 a 1).
+ * Usa coeficiente de Sørensen-Dice sobre bigramas — rápido e sem dependências.
+ */
+function similaridade(a, b) {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+
+  const bigramas = (s) => {
+    const pares = new Map();
+    for (let i = 0; i < s.length - 1; i++) {
+      const bg = s.substring(i, i + 2);
+      pares.set(bg, (pares.get(bg) || 0) + 1);
+    }
+    return pares;
+  };
+
+  const mapA = bigramas(a);
+  const mapB = bigramas(b);
+  let intersecao = 0;
+  let totalA = 0, totalB = 0;
+
+  mapA.forEach((v) => (totalA += v));
+  mapB.forEach((v) => (totalB += v));
+  mapA.forEach((count, bg) => {
+    if (mapB.has(bg)) intersecao += Math.min(count, mapB.get(bg));
+  });
+
+  return (2 * intersecao) / (totalA + totalB);
+}
+
+// Limiar de similaridade para unificar categorias (0.82 = bastante parecidas)
+const SIMILARITY_THRESHOLD = 0.82;
+
+function normalizarCategoria(categoria, mode) {
+  const aliases = CATEGORY_ALIASES[mode] || {};
+  const norm    = normText(categoria);
+
+  // 1. Busca exata no mapa de aliases
+  if (aliases[norm]) return aliases[norm];
+
+  // 2. Busca parcial nos aliases mapeados
+  for (const [key, canonical] of Object.entries(aliases)) {
+    if (norm.includes(key) || key.includes(norm)) return canonical;
+  }
+
+  // 3. Similaridade fuzzy com categorias canônicas já vistas nesta sessão
+  //    Unifica variações não mapeadas (ex: "Deleção linha" ≈ "Deleção de linhas")
+  for (const vista of _canonicasVistas) {
+    if (similaridade(norm, vista.norm) >= SIMILARITY_THRESHOLD) {
+      return vista.canonical;
+    }
+  }
+
+  // 4. Nova categoria — registra e devolve padronizada em maiúsculas
+  const canonical = categoria.trim().toUpperCase();
+  _canonicasVistas.push({ norm, canonical });
+  return canonical;
+}
+
+/**
+ * Extrai um detalhe específico do texto do chamado para exibir como subtítulo no card.
+ * Busca por padrões comuns: números de SOI, FCU, SCI, nomes, IDs.
+ *
+ * @param {string} texto    - Texto completo do comentário
+ * @param {string} categoria - Categoria canônica do chamado
+ * @returns {string|null}   - Detalhe extraído ou null se não encontrar
+ */
+function extrairDetalhe(texto, categoria) {
+  if (!texto) return null;
+  const txt = texto.toUpperCase();
+
+  // Número de SOI (ex: SOI-12345 ou SOI 12345)
+  const soiMatch = txt.match(/SOI[\s\-#]?(\d{4,})/);
+  if (soiMatch) return `SOI ${soiMatch[1]}`;
+
+  // Número de FCU
+  const fcuMatch = txt.match(/FCU[\s\-#]?(\d{4,})/);
+  if (fcuMatch) return `FCU ${fcuMatch[1]}`;
+
+  // Número de SCI
+  const sciMatch = txt.match(/SCI[\s\-#]?(\d{4,})/);
+  if (sciMatch) return `SCI ${sciMatch[1]}`;
+
+  // ID de processo/incidente (ex: INC1234567)
+  const incMatch = txt.match(/\b(INC\d{5,})\b/);
+  if (incMatch) return incMatch[1];
+
+  // Número de linha telefônica (11 dígitos começando com 0 ou 9)
+  const lineMatch = texto.match(/\b(\d{10,11})\b/);
+  if (lineMatch) return `Linha ${lineMatch[1]}`;
+
+  return null;
+}
+
+// =============================================================================
+// SEÇÃO 2C — DESCRIÇÃO E SUBGRUPOS DE CATEGORIAS
+//
+// Descrição: texto fixo explicando o que cada categoria engloba (legenda).
+// Subgrupos: o sistema deduz automaticamente pelas palavras do texto,
+//            agrupando chamados semelhantes dentro da mesma categoria.
+// Tudo sem IA — dedução puramente textual, sem custo de tokens.
+// =============================================================================
+
+// Descrição de cada categoria — aparece no topo do card ao abrir os detalhes.
+// A chave é o nome canônico da categoria. Adicione novas conforme necessário.
+const CATEGORY_DESCRIPTIONS = {
+  "IMPOSSIBILITANDO VENDOR":  "Vendor está impossibilitado de ser lançado.",
+  "GRUPO VENDOR":             "Grupo vendor não corresponde a nenhum no banco de dados.",
+  "CANCELAR VENDOR":          "Solicitação de cancelar acionamento vendor.",
+  "CANDIDATO":                "Problemas relacionados a mudança no candidato: editar endereço ou correção de coordenadas.",
+  "ALTURA":                   "Problemas relacionados a altura errada.",
+  "SOI":                      "Mudança da SOI no banco de dados.",
+  "STATUS SOI":               "Apenas mudança de Status da SOI.",
+  "CANCELAR CANDIDATO":       "Cancelamento de Candidato.",
+  "REGREDIR CANDIDATO":       "Regressão de state de Candidato.",
+  "CANCELAR SOI":             "Cancelamento de SOI.",
+  "NOME SOI":                 "Correção da uf_sigla da SOI.",
+  "E-MAIL":                   "Solicitação para anexar e-mail na FCU.",
+  "REJEITAR":                 "Rejeição de Candidato.",
+  "DETENTORA":                "Alteração de id_detentora.",
+  "STAGE SCI":                "Alteração de Stage da SCI e o processo no Camunda.",
+  "DELEÇÃO OMNI":             "Chamados de deleção de linhas do Omni.",
+  "CANCELAR FCU":             "Mudar o valor da FCU para NULL ou cancelá-la.",
+  "RELATÓRIO":                "Mudança de dados de processo na base.",
+  "VALOR FCU":                "Inserção ou mudança de valores de FCU.",
+  "SCI":                      "Campo relacionado a qualquer mudança/inserção de dados na SCI.",
+};
+
+/**
+ * Retorna a descrição da categoria, ou null se não houver.
+ */
+function getCategoryDescription(categoria) {
+  if (!categoria) return null;
+  // Busca exata
+  if (CATEGORY_DESCRIPTIONS[categoria]) return CATEGORY_DESCRIPTIONS[categoria];
+
+  const upper = categoria.toUpperCase().trim();
+
+  // Busca exata case-insensitive
+  for (const [key, desc] of Object.entries(CATEGORY_DESCRIPTIONS)) {
+    if (key.toUpperCase() === upper) return desc;
+  }
+
+  // Busca parcial rigorosa: a categoria precisa COMEÇAR com o nome canônico
+  // ou o nome canônico precisa começar com a categoria (evita casar só por "SOI" no meio)
+  for (const [key, desc] of Object.entries(CATEGORY_DESCRIPTIONS)) {
+    const k = key.toUpperCase();
+    if (upper.startsWith(k) || k.startsWith(upper)) return desc;
+  }
+
+  return null;
+}
+
+// Palavras-chave que definem a AÇÃO de um chamado, usadas para deduzir subgrupos.
+// Cada entrada: { match: [palavras], label: "Nome do subgrupo" }
+const SUBGROUP_RULES = [
+  { match: ["cancelar", "cancelamento", "cancelad"],       label: "Cancelamento"          },
+  { match: ["inserir", "insercao", "inclusao", "adicionar", "incluir"], label: "Inserção de dados" },
+  { match: ["corrigir", "correcao", "corrigid", "ajustar", "ajuste"],   label: "Correção"          },
+  { match: ["alterar", "alteracao", "mudar", "mudanca", "modificar"],   label: "Alteração"         },
+  { match: ["deletar", "delecao", "remover", "remocao", "excluir"],     label: "Deleção"           },
+  { match: ["regredir", "regressao", "voltar state", "retornar"],       label: "Regressão de state" },
+  { match: ["rejeitar", "rejeicao", "recusar"],            label: "Rejeição"              },
+  { match: ["stage", "state", "status", "etapa"],          label: "Mudança de Stage/Status" },
+  { match: ["anexar", "anexo", "email", "e-mail"],         label: "Anexo/E-mail"          },
+  { match: ["nome", "renomear"],                           label: "Correção de nome"      },
+  { match: ["endereco", "coordenada", "latitude", "longitude"], label: "Endereço/Coordenadas" },
+];
+
+/**
+ * Deduz o subgrupo de um chamado a partir do texto (sem IA).
+ * @returns {string} label do subgrupo, ou "Outros" se nada bater.
+ */
+function deduzirSubgrupo(texto) {
+  const txt = (texto || "").toLowerCase();
+  for (const rule of SUBGROUP_RULES) {
+    if (rule.match.some((kw) => txt.includes(kw))) return rule.label;
+  }
+  return "Outros";
+}
+
+/**
+ * Agrupa os tickets de uma categoria em subgrupos e conta cada um.
+ * @param {Array} tickets
+ * @returns {Array<{ label, count, pct }>} ordenado do maior para o menor
+ */
+function calcularSubgrupos(tickets) {
+  const freq = {};
+  tickets.forEach((t) => {
+    const sub = deduzirSubgrupo(t.description);
+    freq[sub] = (freq[sub] || 0) + 1;
+  });
+  const total = tickets.length || 1;
+  return Object.entries(freq)
+    .map(([label, count]) => ({ label, count, pct: Math.round((count / total) * 100) }))
+    .sort((a, b) => b.count - a.count);
+}
+
+// =============================================================================
 // Busca todos os dados da planilha.
 // Os gráficos usam o histórico completo.
 // A IA usa apenas o período selecionado pelo filtro — controlado em tempo real.
@@ -246,6 +597,9 @@ async function fetchSheetData(mode) {
   const sheetName = cfg.sheetName;
   const colDate   = cfg.colDate   ?? 0;
   const colComment = cfg.colComment ?? 1;
+
+  // Limpa o registro de categorias canônicas para este carregamento
+  resetCanonicas();
 
   const url =
     `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}` +
@@ -274,7 +628,8 @@ async function fetchSheetData(mode) {
 
     // Classifica usando as regras do modo ativo
     const { sistema, categoria } = classificarComentario(comentario, mode);
-    const ticket = { id: `#${idx + 1}`, date, system: sistema, category: categoria, description: comentario };
+    const detalhe = extrairDetalhe(comentario, categoria);
+    const ticket  = { id: `#${idx + 1}`, date, system: sistema, category: categoria, detalhe, description: comentario };
 
     if (!data[sistema])            data[sistema] = {};
     if (!data[sistema][categoria]) data[sistema][categoria] = { tickets: [] };
@@ -344,7 +699,9 @@ async function callGemini(promptText, geminiKey) {
 
   const body = JSON.stringify({
     contents: [{ parts: [{ text: promptText }] }],
-    generationConfig: { maxOutputTokens: 2048 },
+    // 4096 dá folga suficiente para a resposta não ser cortada no meio.
+    // Respostas truncadas geravam JSON inválido e análises vazias.
+    generationConfig: { maxOutputTokens: 4096, temperature: 0.4 },
   });
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -471,7 +828,24 @@ ${retorno}`;
   // Prompt padrão para Fly / Atlas — contexto técnico SRE
   return `Você é um Engenheiro de Confiabilidade de Sistemas (SRE) e Especialista ITIL Sênior do Ecossistema Vivo ${system}.
 
-O sistema ${system} gerencia infraestrutura core da Vivo (antenas, Camunda BPM, Angular 14, Spring Boot).
+CONTEXTO DO SISTEMA FLY:
+O Fly é a ferramenta core da Vivo para gerenciamento e cadastro de sites (antenas, armários e clusters).
+Stack: Java/Spring Boot (back-end), Angular 14 (front-end), Camunda BPM (workflow/stages).
+Módulos: Vivo Go (cadastro da localidade e ID Master), SOI (gestão de candidatos), SAR/Vendor (parte técnica das sharings), SCI/FCU (fase contratual final).
+Fluxo de vida do site: Criação na Master → Abertura da SOI → Definição de Candidatos → SAR → FCU.
+
+PADRÕES CONHECIDOS DE CHAMADOS (base de conhecimento real):
+- Erro de altitude: campo altitude recebe letras (deveria ser numérico); correção na tabela sharing_outdoor_collo/bts, campo Altitude. Nível N1.
+- Erro município/distrito: campo distrito não existe no Science ou município vazio; correção no formulário do candidato. Nível N1.
+- Erro [object Object]: caractere especial/quebra de linha (<br>) em campo do formulário; exige debug. Nível N2.
+- Mapa não carrega: coordenadas positivas ou com vírgula (devem ser negativas e com ponto). Nível N1.
+- Vírgula em altura estrutura: retirar vírgula do campo. Nível N1.
+- Feign null: campo FCU preenchido ao disparar SCI; deixar coluna FCU como null. Nível N1.
+- Unique query result 2: empresa duplicada na tabela empresa do VivoGo; excluir a mais antiga. Nível N1.
+- Subprocesso em andamento: SOI com mais de uma modalidade em aberto; cancelar modalidades extras. Nível N1.
+- Botão não aparece: grupo designado no Camunda diferente do grupo do usuário. Nível N1/N2.
+
+Use esse conhecimento para dar causas raiz precisas e sugestões realistas para o contexto do Fly.
 
 Analise os chamados recorrentes abaixo e para cada categoria retorne OBRIGATORIAMENTE os 4 campos:
 1. "titulo": Nome técnico resumido (máx 6 palavras)
@@ -496,21 +870,29 @@ ${retorno}`;
 function normalizeAnalysisResult(result, categoryName) {
   if (!result || typeof result !== "object") return null;
 
+  // Completa campos faltantes de uma análise parcial (resposta truncada)
+  const completar = (a) => ({
+    titulo:     a.titulo     || categoryName,
+    motivo:     a.motivo     || "",
+    sugestao:   a.sugestao   || "(sugestão não retornada — resposta da IA foi truncada)",
+    prioridade: a.prioridade || "Média",
+  });
+
   // Caso 1: chave exata da categoria
-  if (result[categoryName]?.motivo) return result[categoryName];
+  if (result[categoryName]?.motivo) return completar(result[categoryName]);
 
   // Caso 2: o resultado JÁ É a análise diretamente (nível raiz)
-  // ex: { "titulo": "...", "motivo": "...", "sugestao": "...", "prioridade": "..." }
-  if (result.motivo && result.sugestao) return result;
+  // Aceita mesmo sem `sugestao` — respostas truncadas cortam o último campo
+  if (result.motivo) return completar(result);
 
   // Caso 3: varre todas as chaves buscando um objeto com motivo preenchido
   for (const val of Object.values(result)) {
-    if (val && typeof val === "object" && val.motivo && val.sugestao) return val;
+    if (val && typeof val === "object" && val.motivo) return completar(val);
   }
 
   // Caso 4: retorna a primeira chave mesmo sem motivo (Gemini retornou algo parcial)
   const firstVal = result[Object.keys(result)[0]];
-  if (firstVal && typeof firstVal === "object") return firstVal;
+  if (firstVal && typeof firstVal === "object" && firstVal.motivo) return completar(firstVal);
 
   return null;
 }
@@ -687,6 +1069,155 @@ function PriorityBadge({ priority }) {
   return <Badge colorScheme={cfg.colorScheme} borderRadius="full" px="2">{cfg.label}</Badge>;
 }
 
+// ── CategoryMultiSelect ───────────────────────────────────────────────────────
+// Dropdown com checkboxes para selecionar múltiplas categorias.
+// "Selecionar todas" marca tudo; clicar em uma marcada a desmarca.
+
+function CategoryMultiSelect({ allCategories, selected, onChange }) {
+  const [open, setOpen]       = useState(false);
+  const [search, setSearch]   = useState("");
+  const ref                   = useRef(null);
+  const bg                    = useColorModeValue("white", "gray.800");
+  const border                = useColorModeValue("gray.200", "gray.600");
+  const hoverBg               = useColorModeValue("purple.50", "purple.900");
+
+  // Fecha ao clicar fora
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered    = allCategories.filter((c) =>
+    c.toLowerCase().includes(search.toLowerCase())
+  );
+  const allSelected = selected.length === allCategories.length;
+
+  function toggleAll() {
+    onChange(allSelected ? [] : [...allCategories]);
+  }
+
+  function toggleOne(cat) {
+    onChange(
+      selected.includes(cat)
+        ? selected.filter((c) => c !== cat)
+        : [...selected, cat]
+    );
+  }
+
+  const label = selected.length === 0
+    ? "Todas as categorias"
+    : selected.length === 1
+      ? selected[0].length > 30 ? selected[0].substring(0, 30) + "…" : selected[0]
+      : `${selected.length} categorias`;
+
+  return (
+    <Box position="relative" ref={ref}>
+      {/* Botão que abre o dropdown */}
+      <Flex
+        align="center" justify="space-between"
+        px="3" py="1.5" borderRadius="lg" borderWidth="1px" borderColor={border}
+        bg={bg} cursor="pointer" fontSize="sm" onClick={() => setOpen((v) => !v)}
+        _hover={{ borderColor: "purple.400" }}
+        minH="32px"
+      >
+        <Text fontSize="sm" color={selected.length === 0 ? "gray.400" : "inherit"} noOfLines={1}>
+          {label}
+        </Text>
+        <Text fontSize="10px" color="gray.400" ml="2">{open ? "▲" : "▼"}</Text>
+      </Flex>
+
+      {/* Dropdown */}
+      {open && (
+        <Box
+          position="absolute" top="100%" left="0" right="0" zIndex="200"
+          bg={bg} borderWidth="1px" borderColor={border} borderRadius="lg"
+          shadow="lg" mt="1" maxH="260px" overflowY="auto"
+        >
+          {/* Busca */}
+          <Box px="3" pt="2" pb="1" borderBottomWidth="1px" borderColor={border}>
+            <input
+              autoFocus
+              placeholder="Buscar categoria..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: "100%", fontSize: "12px", border: "none", outline: "none",
+                background: "transparent", padding: "2px 0",
+              }}
+            />
+          </Box>
+
+          {/* Selecionar todas */}
+          <Flex
+            align="center" px="3" py="2" gap="2" cursor="pointer"
+            _hover={{ bg: hoverBg }} borderBottomWidth="1px" borderColor={border}
+            onClick={toggleAll}
+          >
+            <Box
+              w="14px" h="14px" borderRadius="3px" borderWidth="1.5px"
+              borderColor={allSelected ? "purple.500" : border}
+              bg={allSelected ? "purple.500" : "transparent"}
+              display="flex" alignItems="center" justifyContent="center" flexShrink={0}
+            >
+              {allSelected && <Text fontSize="9px" color="white" lineHeight="1">✓</Text>}
+            </Box>
+            <Text fontSize="12px" fontWeight="600" color="purple.600">
+              {allSelected ? "Desmarcar todas" : "Selecionar todas"}
+            </Text>
+            <Badge ml="auto" colorScheme="gray" variant="subtle" fontSize="9px">
+              {allCategories.length}
+            </Badge>
+          </Flex>
+
+          {/* Lista de categorias */}
+          {filtered.length === 0 ? (
+            <Text fontSize="12px" color="gray.400" px="3" py="2">Nenhuma encontrada</Text>
+          ) : (
+            filtered.map((cat) => {
+              const isSelected = selected.includes(cat);
+              return (
+                <Flex
+                  key={cat} align="center" px="3" py="2" gap="2"
+                  cursor="pointer" _hover={{ bg: hoverBg }}
+                  onClick={() => toggleOne(cat)}
+                >
+                  <Box
+                    w="14px" h="14px" borderRadius="3px" borderWidth="1.5px" flexShrink={0}
+                    borderColor={isSelected ? "purple.500" : border}
+                    bg={isSelected ? "purple.500" : "transparent"}
+                    display="flex" alignItems="center" justifyContent="center"
+                  >
+                    {isSelected && <Text fontSize="9px" color="white" lineHeight="1">✓</Text>}
+                  </Box>
+                  <Text fontSize="12px" noOfLines={1}>
+                    {cat.length > 50 ? cat.substring(0, 50) + "…" : cat}
+                  </Text>
+                </Flex>
+              );
+            })
+          )}
+
+          {/* Rodapé com ação de limpar */}
+          {selected.length > 0 && (
+            <Flex
+              justify="flex-end" px="3" py="2"
+              borderTopWidth="1px" borderColor={border}
+            >
+              <Button size="xs" variant="ghost" colorScheme="gray"
+                onClick={() => { onChange([]); setOpen(false); }}>
+                Limpar seleção
+              </Button>
+            </Flex>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 // ── FilterPanel ───────────────────────────────────────────────────────────────
 
 function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, onModeChange, systems }) {
@@ -727,20 +1258,28 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
           </Select>
         </FormControl>
         <FormControl>
-          <FormLabel fontSize="xs" color="gray.500">Categoria</FormLabel>
-          <Select size="sm" borderRadius="lg" value={filters.category} onChange={(e) => onChange("category", e.target.value)}>
-            <option value="">Todas</option>
-            {allCategories.map((c) => (
-              <option key={c} value={c}>{c.length > 55 ? c.substring(0, 55) + "…" : c}</option>
-            ))}
-          </Select>
+          <FormLabel fontSize="xs" color="gray.500">
+            Categoria
+            {filters.categories.length > 0 && (
+              <Badge ml="2" colorScheme="purple" borderRadius="full" fontSize="9px">
+                {filters.categories.length} selecionadas
+              </Badge>
+            )}
+          </FormLabel>
+          <CategoryMultiSelect
+            allCategories={allCategories}
+            selected={filters.categories}
+            onChange={(cats) => onChange("categories", cats)}
+          />
         </FormControl>
         <FormControl>
-          <FormLabel fontSize="xs" color="gray.500">Período para análise IA</FormLabel>
+          <FormLabel fontSize="xs" color="gray.500">Período</FormLabel>
           <Select size="sm" borderRadius="lg" value={filters.period} onChange={(e) => onChange("period", e.target.value)}>
+            <option value="7">Últimos 7 dias</option>
             <option value="30">Últimos 30 dias</option>
             <option value="60">Últimos 60 dias</option>
             <option value="90">Últimos 90 dias</option>
+            <option value="9999">Todo o histórico</option>
           </Select>
         </FormControl>
         <FormControl>
@@ -770,13 +1309,39 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [expandedTicket, setExpandedTicket] = useState(null);
   const [ticketPage, setTicketPage]         = useState(0);
+  const [selectedSubgroup, setSelectedSubgroup] = useState(null); // filtra tabela por subgrupo
+  const [editingDesc, setEditingDesc]       = useState(false);
+  const [descOverride, setDescOverride]     = useState(null);     // legenda editada pelo usuário
+
+  // Descrição: usa a editada se existir, senão a automática
+  const descricaoAuto = getCategoryDescription(categoryName);
+  const descricao     = descOverride !== null ? descOverride : descricaoAuto;
+  const subgrupos     = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
+
+  // Tickets filtrados pelo subgrupo selecionado (se houver)
+  const visibleTickets = useMemo(() => {
+    if (!selectedSubgroup) return categoryData.tickets;
+    return categoryData.tickets.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
+  }, [categoryData.tickets, selectedSubgroup]);
 
   const trend            = getMonthlyTrend(categoryData.tickets);
-  const totalPages       = Math.ceil(categoryData.tickets.length / TICKETS_PER_PAGE);
-  const paginatedTickets = categoryData.tickets.slice(
+  const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
+  const paginatedTickets = visibleTickets.slice(
     ticketPage * TICKETS_PER_PAGE,
     (ticketPage + 1) * TICKETS_PER_PAGE
   );
+
+  // Coleta os detalhes únicos mais frequentes dos tickets desta categoria
+  const detalhesFreq = useMemo(() => {
+    const freq = {};
+    categoryData.tickets.forEach((t) => {
+      if (t.detalhe) freq[t.detalhe] = (freq[t.detalhe] || 0) + 1;
+    });
+    return Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([d]) => d);
+  }, [categoryData.tickets]);
 
   return (
     <Card bg={bg} borderWidth="1px" borderColor={borderColor} borderRadius="xl" shadow="sm" overflow="hidden">
@@ -791,6 +1356,15 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
               {analysis?.titulo || categoryName}
             </Text>
             <Text fontSize="11px" color="gray.500" mt="1" noOfLines={1}>{categoryName}</Text>
+            {detalhesFreq.length > 0 && (
+              <HStack mt="1" spacing="1" flexWrap="wrap">
+                {detalhesFreq.map((d) => (
+                  <Badge key={d} colorScheme="gray" variant="outline" fontSize="9px" borderRadius="full">
+                    {d}
+                  </Badge>
+                ))}
+              </HStack>
+            )}
           </Box>
           <VStack align="flex-end" spacing="0">
             <Text fontSize="2xl" fontWeight="700" color="purple.500" lineHeight="1">
@@ -858,6 +1432,87 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
               <Text fontSize="xs" color="gray.500">{categoryData.tickets.length} chamados totais</Text>
             </HStack>
 
+            {/* Descrição da categoria (legenda) — editável */}
+            <Box mb="4" p="3" bg={statBg} borderRadius="lg" borderLeftWidth="3px" borderLeftColor="purple.400">
+              <Flex justify="space-between" align="center" mb="1">
+                <Text fontSize="10px" fontWeight="700" color="purple.500" textTransform="uppercase">
+                  O que esta categoria engloba
+                </Text>
+                <Button size="xs" variant="ghost" colorScheme="purple" height="18px" fontSize="10px"
+                  onClick={() => { setEditingDesc(!editingDesc); if (descOverride === null) setDescOverride(descricao || ""); }}>
+                  {editingDesc ? "Salvar" : "✎ Editar"}
+                </Button>
+              </Flex>
+              {editingDesc ? (
+                <textarea
+                  autoFocus
+                  value={descOverride ?? ""}
+                  onChange={(e) => setDescOverride(e.target.value)}
+                  placeholder="Descreva o que esta categoria engloba..."
+                  style={{
+                    width: "100%", minHeight: "48px", fontSize: "13px", padding: "6px 8px",
+                    border: "1px solid #CBD5E0", borderRadius: "6px", outline: "none",
+                    fontFamily: "inherit", resize: "vertical", background: "transparent",
+                  }}
+                />
+              ) : descricao ? (
+                <Text fontSize="13px" color={textColor} lineHeight="1.5">{descricao}</Text>
+              ) : (
+                <Text fontSize="12px" color="gray.400" fontStyle="italic">
+                  Sem descrição definida — clique em Editar para adicionar.
+                </Text>
+              )}
+            </Box>
+
+            {/* Subgrupos deduzidos automaticamente — clicáveis para filtrar a tabela */}
+            {subgrupos.length > 1 && (
+              <Box mb="4">
+                <Flex justify="space-between" align="center" mb="2">
+                  <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase">
+                    Tipos de chamado nesta categoria
+                  </Text>
+                  {selectedSubgroup && (
+                    <Button size="xs" variant="ghost" colorScheme="purple" height="18px" fontSize="10px"
+                      onClick={() => { setSelectedSubgroup(null); setTicketPage(0); }}>
+                      ✕ Limpar filtro
+                    </Button>
+                  )}
+                </Flex>
+                <VStack spacing="1.5" align="stretch">
+                  {subgrupos.map((sg) => {
+                    const isActive = selectedSubgroup === sg.label;
+                    return (
+                      <Box
+                        key={sg.label} cursor="pointer" p="1.5" borderRadius="md"
+                        bg={isActive ? "purple.50" : "transparent"}
+                        borderWidth="1px" borderColor={isActive ? "purple.300" : "transparent"}
+                        _hover={{ bg: isActive ? "purple.50" : statBg }}
+                        onClick={() => {
+                          setSelectedSubgroup(isActive ? null : sg.label);
+                          setTicketPage(0);
+                        }}
+                      >
+                        <Flex justify="space-between" mb="0.5">
+                          <Text fontSize="12px" color={textColor} fontWeight={isActive ? "600" : "400"}>
+                            {isActive ? "▸ " : ""}{sg.label}
+                          </Text>
+                          <Text fontSize="11px" color="gray.500">{sg.count} ({sg.pct}%)</Text>
+                        </Flex>
+                        <Box bg={statBg} borderRadius="full" h="6px" overflow="hidden">
+                          <Box bg={isActive ? "purple.500" : "purple.400"} h="6px" borderRadius="full" width={`${sg.pct}%`} />
+                        </Box>
+                      </Box>
+                    );
+                  })}
+                </VStack>
+                {selectedSubgroup && (
+                  <Text fontSize="10px" color="purple.500" mt="1">
+                    Mostrando apenas chamados do tipo "{selectedSubgroup}" na tabela abaixo.
+                  </Text>
+                )}
+              </Box>
+            )}
+
             <Chart
               type="area"
               height={200}
@@ -881,7 +1536,9 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
             <Divider my="4" />
 
             <Flex justify="space-between" align="center" mb="3">
-              <Text fontWeight="600" fontSize="sm">Chamados ({categoryData.tickets.length})</Text>
+              <Text fontWeight="600" fontSize="sm">
+                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${categoryData.tickets.length}` : ""})
+              </Text>
               {totalPages > 1 && (
                 <HStack spacing="1">
                   <Button size="xs" variant="outline" isDisabled={ticketPage === 0}
@@ -895,7 +1552,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
 
             <Table size="xs">
               <Thead>
-                <Tr><Th w="60px">Linha</Th><Th w="90px">Data</Th><Th>Descrição</Th></Tr>
+                <Tr><Th w="60px">Linha</Th><Th w="90px">Data</Th><Th w="90px">Detalhe</Th><Th>Descrição</Th></Tr>
               </Thead>
               <Tbody>
                 {paginatedTickets.map((t) => (
@@ -903,6 +1560,13 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
                     onClick={() => setExpandedTicket(expandedTicket === t.id ? null : t.id)}>
                     <Td><Text fontSize="11px" fontFamily="mono" color="purple.500">{t.id}</Text></Td>
                     <Td fontSize="11px" whiteSpace="nowrap">{t.date.toLocaleDateString("pt-BR")}</Td>
+                    <Td>
+                      {t.detalhe && (
+                        <Badge colorScheme="purple" variant="subtle" fontSize="9px" borderRadius="full">
+                          {t.detalhe}
+                        </Badge>
+                      )}
+                    </Td>
                     <Td fontSize="11px">
                       {expandedTicket === t.id ? (
                         <Box>
@@ -926,8 +1590,8 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
             {totalPages > 1 && (
               <Text fontSize="11px" color="gray.400" mt="2" textAlign="center">
                 Exibindo {ticketPage * TICKETS_PER_PAGE + 1}–
-                {Math.min((ticketPage + 1) * TICKETS_PER_PAGE, categoryData.tickets.length)} de{" "}
-                {categoryData.tickets.length} chamados
+                {Math.min((ticketPage + 1) * TICKETS_PER_PAGE, visibleTickets.length)} de{" "}
+                {visibleTickets.length} chamados
               </Text>
             )}
           </ModalBody>
@@ -1032,7 +1696,43 @@ function OverviewCharts({ data, systems }) {
 // SEÇÃO 8 — COMPONENTE PRINCIPAL
 // =============================================================================
 
-const INITIAL_FILTERS = { system: "", category: "", period: "90", priority: "" };
+const INITIAL_FILTERS = { system: "", categories: [], period: "90", priority: "" };
+
+// =============================================================================
+// PERSISTÊNCIA DE ANÁLISES (localStorage)
+//
+// As análises da IA são salvas no navegador, separadas por modo, para não se
+// perderem ao recarregar a página. Funciona no ambiente real (Vercel/local);
+// não funciona dentro de artifacts do chat (que bloqueiam localStorage).
+// =============================================================================
+
+const STORAGE_PREFIX = "vivo-dashboard-analyses";
+
+// Carrega as análises salvas de um modo específico
+function loadStoredAnalyses(mode) {
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}::${mode}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {}; // localStorage indisponível ou dado corrompido
+  }
+}
+
+// Salva as análises de um modo específico
+function saveStoredAnalyses(mode, analyses) {
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}::${mode}`, JSON.stringify(analyses));
+  } catch (_) {
+    // Silencioso — se localStorage não estiver disponível, apenas não persiste
+  }
+}
+
+// Remove as análises salvas de um modo específico
+function clearStoredAnalyses(mode) {
+  try {
+    localStorage.removeItem(`${STORAGE_PREFIX}::${mode}`);
+  } catch (_) { /* silencioso */ }
+}
 
 export default function VivoDashboard() {
   // ── Estado ──────────────────────────────────────────────────────────────────
@@ -1041,10 +1741,11 @@ export default function VivoDashboard() {
   const [sheetLoading,    setSheetLoading]    = useState(false);
   const [sheetError,      setSheetError]      = useState(null);
   const [lastSync,        setLastSync]        = useState(null);
-  const [analyses,        setAnalyses]        = useState({});
+  const [analyses,        setAnalyses]        = useState(() => loadStoredAnalyses(DEFAULT_MODE));
   const [loadingKeys,     setLoadingKeys]     = useState({});
   const [bulkLoading,     setBulkLoading]     = useState(false);
   const [mockMode,        setMockMode]        = useState(false); // quando true, substitui Gemini por dados simulados
+  const [failedCats,      setFailedCats]      = useState([]);    // categorias que falharam na última análise em lote
   const [filters,         setFilters]         = useState(INITIAL_FILTERS);
 
   const toast  = useToast();
@@ -1058,34 +1759,61 @@ export default function VivoDashboard() {
   const SYSTEMS         = MODE_CONFIG[activeMode]?.systems || ["Fly", "Atlas"];
   const filteredSystems = filters.system ? [filters.system] : SYSTEMS;
 
+  const periodDays = parseInt(filters.period || "90");
+
+  // periodData: cópia de `data` contendo apenas tickets dentro do período selecionado.
+  // Alimenta TUDO na tela (cards, contagens, gráficos, lista) para que o filtro de
+  // período afete a visualização inteira — não só a IA.
+  // Categorias que ficam sem nenhum ticket no período são removidas.
+  const periodData = useMemo(() => {
+    // "Todo o histórico" (9999) — não filtra nada
+    if (periodDays >= 9999) return data;
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - periodDays);
+
+    const filtered = {};
+    Object.entries(data).forEach(([sys, cats]) => {
+      Object.entries(cats).forEach(([cat, val]) => {
+        const tickets = val.tickets.filter((t) => t.date >= cutoff);
+        if (tickets.length > 0) {
+          if (!filtered[sys]) filtered[sys] = {};
+          filtered[sys][cat] = { ...val, tickets };
+        }
+      });
+    });
+    return filtered;
+  }, [data, periodDays]);
+
   const allCategories = useMemo(() => {
     const cats = new Set();
-    Object.values(data).forEach((sys) => Object.keys(sys).forEach((c) => cats.add(c)));
+    Object.values(periodData).forEach((sys) => Object.keys(sys).forEach((c) => cats.add(c)));
     return [...cats].sort();
-  }, [data]);
+  }, [periodData]);
 
   const filteredCards = useMemo(() => {
     const cards = [];
     filteredSystems.forEach((sys) => {
-      if (!data[sys]) return;
-      Object.entries(data[sys]).forEach(([cat, val]) => {
-        if (filters.category && cat !== filters.category) return;
+      if (!periodData[sys]) return;
+      Object.entries(periodData[sys]).forEach(([cat, val]) => {
+        if (filters.categories.length > 0 && !filters.categories.includes(cat)) return;
         const key      = `${sys}::${cat}`;
         const analysis = analyses[key];
         if (filters.priority && analysis?.prioridade !== filters.priority) return;
         cards.push({ sys, cat, val, key, analysis });
       });
     });
-    return cards;
-  }, [data, filteredSystems, filters, analyses]);
+    // Ordena do maior para o menor volume de chamados
+    return cards.sort((a, b) => b.val.tickets.length - a.val.tickets.length);
+  }, [periodData, filteredSystems, filters, analyses]);
 
   const totalTickets = useMemo(() => {
     let t = 0;
     filteredSystems.forEach((s) =>
-      Object.values(data[s] || {}).forEach((v) => (t += v.tickets.length))
+      Object.values(periodData[s] || {}).forEach((v) => (t += v.tickets.length))
     );
     return t;
-  }, [data, filteredSystems]);
+  }, [periodData, filteredSystems]);
 
   const tickets30 = useMemo(() => {
     let current = 0, previous = 0;
@@ -1167,9 +1895,7 @@ export default function VivoDashboard() {
         total:   ticketsNoPeriodo.length,
         last30:  countInRange(ticketsNoPeriodo, 30),
       }]);
-      console.log("[DEBUG] Gemini result:", JSON.stringify(result, null, 2));
       const analysis = normalizeAnalysisResult(result, categoryName);
-      console.log("[DEBUG] Normalized analysis:", JSON.stringify(analysis, null, 2));
       setAnalyses((prev) => ({ ...prev, [key]: analysis }));
       toast({ title: "Análise concluída", description: categoryName.substring(0, 50) + "…", status: "success", duration: 3000 });
     } catch (e) {
@@ -1179,18 +1905,29 @@ export default function VivoDashboard() {
     }
   }, [data, filters.period, analyzeCategories, toast]);
 
-  const requestBulkAnalysis = useCallback(async () => {
+  // `onlyThese` (opcional): array de nomes de categorias para analisar apenas essas.
+  // Usado pelo botão "Repetir falhas" — ignora o filtro e o "já analisadas".
+  const requestBulkAnalysis = useCallback(async (onlyThese = null) => {
     if (!filters.system) {
       toast({ title: "Selecione um sistema", description: "Configure o filtro antes de solicitar análise em lote.", status: "warning", duration: 4000 });
       return;
     }
     setBulkLoading(true);
+    setFailedCats([]);
     try {
       const sys    = filters.system;
       const period = parseInt(filters.period || "90");
 
-      // Filtra pelo período selecionado — categorias sem atividade no período são ignoradas
+      const isRetry      = Array.isArray(onlyThese) && onlyThese.length > 0;
+      const selectedCats = filters.categories; // [] = todas, [x,y] = apenas essas
+
+      // Filtra pelo período, pelas categorias do filtro, e pula as já analisadas.
+      // No modo "repetir falhas", considera apenas as categorias informadas.
       const allCats = Object.entries(data[sys] || {})
+        .filter(([name]) => isRetry
+          ? onlyThese.includes(name)
+          : (selectedCats.length === 0 || selectedCats.includes(name)))
+        .filter(([name]) => isRetry || !analyses[`${sys}::${name}`]) // pula já analisadas (exceto no retry)
         .map(([name, val]) => {
           const ticketsNoPeriodo = getTicketsInPeriod(val.tickets, period);
           return {
@@ -1202,80 +1939,104 @@ export default function VivoDashboard() {
         })
         .filter((c) => c.total > 0);
 
+      // Conta quantas foram puladas por já terem análise (para informar no toast)
+      const jaAnalisadas = isRetry ? 0 : Object.entries(data[sys] || {})
+        .filter(([name]) => selectedCats.length === 0 || selectedCats.includes(name))
+        .filter(([name]) => analyses[`${sys}::${name}`]).length;
+
       if (allCats.length === 0) {
-        toast({ title: "Sem chamados no período", description: `Nenhuma categoria com chamados nos últimos ${period} dias para ${sys}.`, status: "warning", duration: 4000 });
+        toast({
+          title:       jaAnalisadas > 0 ? "Tudo já analisado" : "Sem chamados no período",
+          description: jaAnalisadas > 0
+            ? `Todas as categorias selecionadas já possuem análise. Nenhum token foi gasto.`
+            : `Nenhuma categoria com chamados nos últimos ${period} dias para ${sys}.`,
+          status:      jaAnalisadas > 0 ? "info" : "warning",
+          duration:    4000,
+        });
         setBulkLoading(false);
         return;
       }
 
+      const escopoLabel = isRetry
+        ? `${allCats.length} categorias que falharam`
+        : selectedCats.length > 0
+          ? `${selectedCats.length} categorias selecionadas`
+          : "todas as categorias";
+
       toast({
-        title:       `${allCats.length} categorias ativas encontradas`,
-        description: `Analisando chamados dos últimos ${period} dias. Categorias inativas foram ignoradas.`,
+        title:       `${allCats.length} categorias a analisar`,
+        description: jaAnalisadas > 0
+          ? `Analisando ${escopoLabel} — ${jaAnalisadas} já analisadas foram puladas (economia de tokens).`
+          : `Analisando ${escopoLabel} — últimos ${period} dias. Categorias sem atividade serão ignoradas.`,
         status:      "info",
         duration:    5000,
       });
 
-      const batches = [];
-      for (let i = 0; i < allCats.length; i += BATCH_SIZE) {
-        batches.push(allCats.slice(i, i + BATCH_SIZE));
-      }
-
+      // Analisa UMA categoria por requisição — elimina ambiguidade de matching.
+      // Se a resposta vier vazia/truncada, tenta novamente até ANALYSIS_RETRIES vezes.
+      const ANALYSIS_RETRIES = 3;
       let totalAnalysed = 0;
-      for (let i = 0; i < batches.length; i++) {
+      const falharam    = [];
+
+      for (let i = 0; i < allCats.length; i++) {
+        const cat = allCats[i];
+
         toast({
-          title:       `Analisando lote ${i + 1} de ${batches.length}…`,
-          description: `${batches[i].length} categorias. Aguarde entre lotes.`,
+          title:       `Analisando ${i + 1} de ${allCats.length}…`,
+          description: cat.name.length > 45 ? cat.name.substring(0, 45) + "…" : cat.name,
           status:      "info",
-          duration:    BATCH_DELAY_MS - 1000,
+          duration:    3000,
         });
 
-        const result      = await analyzeCategories(sys, batches[i]);
-        const newAnalyses = {};
+        let salvou = false;
 
-        // Para cada categoria do lote, tenta encontrar a análise correspondente
-        // no resultado do Gemini — independente do nome que ele usou como chave.
-        batches[i].forEach((cat) => {
-          // 1. Busca pelo nome exato
-          let analysis = result[cat.name];
+        for (let tentativa = 1; tentativa <= ANALYSIS_RETRIES && !salvou; tentativa++) {
+          try {
+            const result   = await analyzeCategories(sys, [cat]);
+            const analysis = normalizeAnalysisResult(result, cat.name);
 
-          // 2. Busca case-insensitive / parcial (Gemini às vezes abrevia o nome)
-          if (!analysis) {
-            const geminiKey = Object.keys(result).find((k) =>
-              k.toLowerCase().includes(cat.name.toLowerCase().substring(0, 20)) ||
-              cat.name.toLowerCase().includes(k.toLowerCase().substring(0, 20))
-            );
-            if (geminiKey) analysis = result[geminiKey];
+            // Só salva se a análise tem conteúdo real (motivo preenchido)
+            if (analysis && analysis.motivo) {
+              setAnalyses((prev) => ({ ...prev, [`${sys}::${cat.name}`]: analysis }));
+              totalAnalysed++;
+              salvou = true;
+            } else {
+              console.warn(`Análise vazia para "${cat.name}" (tentativa ${tentativa}/${ANALYSIS_RETRIES})`, result);
+              if (tentativa < ANALYSIS_RETRIES) await new Promise((r) => setTimeout(r, 4000));
+            }
+          } catch (e) {
+            // Erro de autenticação/quota: para tudo — não adianta continuar
+            if (String(e.message).includes("401") || String(e.message).includes("403")) throw e;
+
+            console.error(`Erro ao analisar "${cat.name}" (tentativa ${tentativa}/${ANALYSIS_RETRIES}):`, e.message);
+            if (tentativa < ANALYSIS_RETRIES) await new Promise((r) => setTimeout(r, 6000));
           }
+        }
 
-          // 3. Se só veio uma categoria no lote e não achou pelo nome, pega a primeira
-          if (!analysis && batches[i].length === 1) {
-            analysis = Object.values(result)[0];
-          }
+        if (!salvou) falharam.push(cat.name);
 
-          // 4. Se a análise veio no nível raiz (sem envelope de categoria)
-          if (!analysis && result.motivo) analysis = result;
-
-          if (analysis) {
-            // Garante que motivo e sugestao estão presentes
-            const normalized = analysis.motivo ? analysis : normalizeAnalysisResult(result, cat.name);
-            newAnalyses[`${sys}::${cat.name}`] = normalized;
-          }
-        });
-        setAnalyses((prev) => ({ ...prev, ...newAnalyses }));
-        totalAnalysed += Object.keys(newAnalyses).length;
-
-        if (i < batches.length - 1) {
-          await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+        // Pausa entre categorias para respeitar o rate limit do Gemini
+        if (i < allCats.length - 1) {
+          await new Promise((r) => setTimeout(r, 2500));
         }
       }
 
-      toast({ title: "Análise em lote concluída!", description: `${totalAnalysed} categorias analisadas para ${sys} (últimos ${period} dias)`, status: "success", duration: 5000 });
+      setFailedCats(falharam);
+
+      toast({
+        title:       "Análise em lote concluída!",
+        description: falharam.length > 0
+          ? `${totalAnalysed} analisadas · ${falharam.length} falharam. Use "Repetir falhas" no topo para tentar de novo.`
+          : `${totalAnalysed} categorias analisadas para ${sys} (últimos ${period} dias).`,
+        status:      falharam.length > 0 ? "warning" : "success",
+        duration:    7000,
+      });
     } catch (e) {
       toast({ title: "Erro na análise em lote", description: String(e.message), status: "error", duration: 6000 });
     } finally {
       setBulkLoading(false);
     }
-  }, [data, filters.system, filters.period, analyzeCategories, toast]);
+  }, [data, filters.system, filters.period, filters.categories, analyses, analyzeCategories, toast]);
 
   // Gera e baixa um relatório HTML formatado para impressão/PDF
   // com apenas as categorias que já foram analisadas pela IA.
@@ -1440,15 +2201,27 @@ export default function VivoDashboard() {
   const handleFilterChange = useCallback((key, value) => setFilters((f) => ({ ...f, [key]: value })), []);
   const handleFilterReset  = useCallback(() => setFilters(INITIAL_FILTERS), []);
 
-  // Ao trocar de modo: limpa dados, análises e filtros para evitar mistura entre sistemas
+  // Salva as análises no localStorage sempre que mudam (por modo)
+  useEffect(() => {
+    saveStoredAnalyses(activeMode, analyses);
+  }, [analyses, activeMode]);
+
+  // Ao trocar de modo: limpa dados/filtros e carrega as análises SALVAS do novo modo
   const handleModeChange = useCallback((newMode) => {
     setActiveMode(newMode);
     setData({});
-    setAnalyses({});
+    setAnalyses(loadStoredAnalyses(newMode)); // recupera análises persistidas
     setFilters(INITIAL_FILTERS);
     setLastSync(null);
     setSheetError(null);
   }, []);
+
+  // Limpa as análises do modo atual (memória + localStorage)
+  const handleClearAnalyses = useCallback(() => {
+    setAnalyses({});
+    clearStoredAnalyses(activeMode);
+    toast({ title: "Análises limpas", description: `As análises de ${MODE_CONFIG[activeMode]?.label} foram removidas.`, status: "info", duration: 3000 });
+  }, [activeMode, toast]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -1469,9 +2242,21 @@ export default function VivoDashboard() {
                   {MODE_CONFIG[activeMode]?.label}
                 </Badge>
               </Flex>
-              <Text fontSize="11px" color="gray.500">
-                {lastSync ? `Última sincronização: ${lastSync}` : "Planilha não carregada"}
-              </Text>
+              <Flex align="center" gap="1.5" mt="0.5">
+                {sheetLoading ? (
+                  <>
+                    <Spinner size="xs" color="blue.400" />
+                    <Text fontSize="11px" color="blue.500">Atualizando dados…</Text>
+                  </>
+                ) : lastSync ? (
+                  <>
+                    <Box w="6px" h="6px" borderRadius="full" bg="green.400" />
+                    <Text fontSize="11px" color="gray.500">Atualizado em {lastSync}</Text>
+                  </>
+                ) : (
+                  <Text fontSize="11px" color="gray.500">Planilha não carregada</Text>
+                )}
+              </Flex>
             </Box>
           </HStack>
           <HStack spacing="2">
@@ -1506,10 +2291,23 @@ export default function VivoDashboard() {
             <Button
               size="sm" colorScheme="purple" borderRadius="lg"
               isLoading={bulkLoading} loadingText="Analisando…"
-              onClick={requestBulkAnalysis}
+              onClick={() => requestBulkAnalysis()}
             >
               Análise IA em lote
             </Button>
+            {failedCats.length > 0 && !bulkLoading && (
+              <Button
+                size="sm" colorScheme="orange" variant="outline" borderRadius="lg"
+                onClick={() => requestBulkAnalysis(failedCats)}
+              >
+                ↻ Repetir falhas ({failedCats.length})
+              </Button>
+            )}
+            {Object.keys(analyses).length > 0 && (
+              <Button size="sm" variant="ghost" colorScheme="red" borderRadius="lg" onClick={handleClearAnalyses}>
+                🗑 Limpar análises
+              </Button>
+            )}
           </HStack>
         </Flex>
       </Box>
@@ -1570,7 +2368,7 @@ export default function VivoDashboard() {
         />
 
         <SimpleGrid columns={{ base: 2, md: 4 }} spacing="4" mb="6">
-          <StatCard label="Total de chamados"      value={totalTickets.toLocaleString("pt-BR")} color="purple" />
+          <StatCard label={periodDays >= 9999 ? "Total de chamados" : `Chamados (${periodDays}d)`} value={totalTickets.toLocaleString("pt-BR")} color="purple" />
           <StatCard label="Últimos 30 dias"        value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="blue" />
           <StatCard label="Categorias ativas"      value={filteredCards.length} color="teal" />
           <StatCard label={`${MODE_CONFIG[activeMode]?.label} — Analisadas`} value={`${analysedCount}/${filteredCards.length}`} color="orange" />
@@ -1584,7 +2382,7 @@ export default function VivoDashboard() {
 
           <TabPanels>
             <TabPanel px="0">
-              <OverviewCharts data={data} systems={SYSTEMS} />
+              <OverviewCharts data={periodData} systems={SYSTEMS} />
             </TabPanel>
 
             <TabPanel px="0">
