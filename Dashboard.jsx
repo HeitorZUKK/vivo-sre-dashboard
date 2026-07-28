@@ -33,13 +33,13 @@ import Chart from "react-apexcharts";
 //     Acesse com: import.meta.env.VITE_NOME_DA_VARIAVEL
 // =============================================================================
 
-const SHEETS_API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "AIzaSyAOcJU0bourcAH-rw-zIkQLI_oOo79H9bk";
+const SHEETS_API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 const SPREADSHEET_ID = import.meta.env.VITE_SPREADSHEET_ID || "1Ne5pMhMk0eXnZt9n6whQJi2BD9weUTo40INFHK5zUus";
 
 // Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha
 const MODE_CONFIG = {
   "Fly/Atlas": {
-    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_FLY      || "AIzaSyCR941fZ-srssfe2VB5Iu3A7pv6JlB66JY",
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_FLY      || "",
     sheetName:  import.meta.env.VITE_SHEET_NAME_FLY          || "resultado",
     systems:    ["Fly", "Atlas"],
     label:      "Fly / Atlas",
@@ -47,7 +47,7 @@ const MODE_CONFIG = {
     colComment: 1,  // coluna B — comentários
   },
   "Valoriza": {
-    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_VALORIZA || "AIzaSyCR941fZ-srssfe2VB5Iu3A7pv6JlB66JY",
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_VALORIZA || "",
     sheetName:  import.meta.env.VITE_SHEET_NAME_VALORIZA     || "valoriza",
     systems:    ["Valoriza"],
     label:      "Valoriza",
