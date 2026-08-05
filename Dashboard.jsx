@@ -34,6 +34,10 @@ import Chart from "react-apexcharts";
 // =============================================================================
 
 const SHEETS_API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
+
+// Senha única de acesso ao dashboard. Configure VITE_ACCESS_PASSWORD no .env / Vercel.
+// Se ficar vazia, o dashboard abre sem pedir senha (útil para desenvolvimento local).
+const ACCESS_PASSWORD = import.meta.env.VITE_ACCESS_PASSWORD || "";
 const SPREADSHEET_ID = import.meta.env.VITE_SPREADSHEET_ID || "1Ne5pMhMk0eXnZt9n6whQJi2BD9weUTo40INFHK5zUus";
 
 // Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha
@@ -1736,7 +1740,7 @@ function clearStoredAnalyses(mode) {
   } catch (_) { /* silencioso */ }
 }
 
-export default function VivoDashboard() {
+function DashboardApp() {
   // ── Estado ──────────────────────────────────────────────────────────────────
   const [activeMode,      setActiveMode]      = useState(DEFAULT_MODE); // "Fly/Atlas" | "Valoriza"
   const [data,            setData]            = useState({});
@@ -2310,6 +2314,17 @@ export default function VivoDashboard() {
                 🗑 Limpar análises
               </Button>
             )}
+            {ACCESS_PASSWORD && (
+              <Button
+                size="sm" variant="ghost" colorScheme="gray" borderRadius="lg"
+                onClick={() => {
+                  try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (_) { /* ignora */ }
+                  window.location.reload();
+                }}
+              >
+                Sair
+              </Button>
+            )}
           </HStack>
         </Flex>
       </Box>
@@ -2426,4 +2441,89 @@ export default function VivoDashboard() {
       </Box>
     </Box>
   );
+}
+
+// =============================================================================
+// TELA DE LOGIN + WRAPPER DE AUTENTICAÇÃO
+//
+// Protege o dashboard com uma senha única (VITE_ACCESS_PASSWORD).
+// O acesso liberado fica salvo no navegador (sessionStorage) — a pessoa não
+// precisa digitar a senha a cada ação, só uma vez por sessão do navegador.
+// =============================================================================
+
+const AUTH_STORAGE_KEY = "vivo-dashboard-auth";
+
+function LoginScreen({ onLogin }) {
+  const [senha, setSenha]   = useState("");
+  const [erro, setErro]     = useState(false);
+  const bg      = useColorModeValue("gray.50", "gray.900");
+  const cardBg  = useColorModeValue("white", "gray.800");
+  const border  = useColorModeValue("gray.200", "gray.700");
+
+  function tentarLogin() {
+    if (senha === ACCESS_PASSWORD) {
+      try { sessionStorage.setItem(AUTH_STORAGE_KEY, "ok"); } catch (_) { /* ignora */ }
+      onLogin();
+    } else {
+      setErro(true);
+      setSenha("");
+    }
+  }
+
+  return (
+    <Box minH="100vh" bg={bg} display="flex" alignItems="center" justifyContent="center" fontFamily="'Inter', sans-serif" px="4">
+      <Card bg={cardBg} borderWidth="1px" borderColor={border} borderRadius="2xl" shadow="lg" maxW="380px" w="full">
+        <CardBody p="8">
+          <VStack spacing="5" align="stretch">
+            <VStack spacing="2">
+              <Box w="12" h="12" borderRadius="xl" bg="purple.500" display="flex" alignItems="center" justifyContent="center">
+                <Text color="white" fontWeight="800" fontSize="22px">V</Text>
+              </Box>
+              <Heading size="md" textAlign="center">Vivo SRE Dashboard</Heading>
+              <Text fontSize="sm" color="gray.500" textAlign="center">
+                Digite a senha de acesso para continuar
+              </Text>
+            </VStack>
+
+            <Box>
+              <input
+                type="password"
+                autoFocus
+                placeholder="Senha de acesso"
+                value={senha}
+                onChange={(e) => { setSenha(e.target.value); setErro(false); }}
+                onKeyDown={(e) => { if (e.key === "Enter") tentarLogin(); }}
+                style={{
+                  width: "100%", padding: "10px 14px", fontSize: "14px",
+                  border: erro ? "1.5px solid #E53E3E" : "1.5px solid #CBD5E0",
+                  borderRadius: "10px", outline: "none", fontFamily: "inherit",
+                }}
+              />
+              {erro && (
+                <Text fontSize="xs" color="red.500" mt="2">Senha incorreta. Tente novamente.</Text>
+              )}
+            </Box>
+
+            <Button colorScheme="purple" borderRadius="lg" onClick={tentarLogin} w="full">
+              Entrar
+            </Button>
+          </VStack>
+        </CardBody>
+      </Card>
+    </Box>
+  );
+}
+
+export default function VivoDashboard() {
+  // Se não há senha configurada, libera direto (modo desenvolvimento).
+  // Senão, verifica se já autenticou nesta sessão do navegador.
+  const [autenticado, setAutenticado] = useState(() => {
+    if (!ACCESS_PASSWORD) return true;
+    try { return sessionStorage.getItem(AUTH_STORAGE_KEY) === "ok"; } catch (_) { return false; }
+  });
+
+  if (!autenticado) {
+    return <LoginScreen onLogin={() => setAutenticado(true)} />;
+  }
+  return <DashboardApp />;
 }
