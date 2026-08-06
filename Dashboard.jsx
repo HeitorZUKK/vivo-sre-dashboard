@@ -1281,13 +1281,6 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
         </FormControl>
 
         <FormControl>
-          <FormLabel fontSize="xs" color="gray.500">Sistema</FormLabel>
-          <Select size="sm" borderRadius="lg" value={filters.system} onChange={(e) => onChange("system", e.target.value)}>
-            <option value="">Todos</option>
-            {systems.map((s) => <option key={s} value={s}>{s}</option>)}
-          </Select>
-        </FormControl>
-        <FormControl>
           <FormLabel fontSize="xs" color="gray.500">
             Categoria
             {filters.categories.length > 0 && (
@@ -1726,7 +1719,7 @@ function OverviewCharts({ data, systems }) {
 // SEÇÃO 8 — COMPONENTE PRINCIPAL
 // =============================================================================
 
-const INITIAL_FILTERS = { system: "", categories: [], period: "90", priority: "" };
+const INITIAL_FILTERS = { system: MODE_CONFIG[DEFAULT_MODE]?.systems[0] || "Fly", categories: [], period: "90", priority: "" };
 
 // =============================================================================
 // PERSISTÊNCIA DE ANÁLISES (localStorage)
@@ -1785,9 +1778,18 @@ function DashboardApp() {
 
   // ── Derivados ────────────────────────────────────────────────────────────────
 
-  // Sistemas disponíveis dependem do modo ativo
-  const SYSTEMS         = MODE_CONFIG[activeMode]?.systems || ["Fly", "Atlas"];
-  const filteredSystems = filters.system ? [filters.system] : SYSTEMS;
+  // Cada modo tem exatamente um sistema. O sistema ativo é sempre o do modo.
+  const SYSTEMS         = MODE_CONFIG[activeMode]?.systems || ["Fly"];
+  const activeSystem    = SYSTEMS[0]; // sistema único do modo
+  const filteredSystems = [activeSystem];
+
+  // Mantém filters.system sincronizado com o sistema do modo ativo,
+  // já que o filtro visual de sistema foi removido.
+  useEffect(() => {
+    if (filters.system !== activeSystem) {
+      setFilters((f) => ({ ...f, system: activeSystem }));
+    }
+  }, [activeSystem, filters.system]);
 
   const periodDays = parseInt(filters.period || "90");
 
@@ -2256,7 +2258,7 @@ function DashboardApp() {
     setActiveMode(newMode);
     setData({});
     setAnalyses(loadStoredAnalyses(newMode)); // recupera análises persistidas
-    setFilters(INITIAL_FILTERS);
+    setFilters({ ...INITIAL_FILTERS, system: MODE_CONFIG[newMode]?.systems[0] || "Fly" });
     setLastSync(null);
     setSheetError(null);
   }, []);
@@ -2399,16 +2401,6 @@ function DashboardApp() {
             <AlertIcon />
             <AlertDescription fontSize="sm">
               Clique em <strong>"⬇ Carregar Planilha"</strong> para importar os dados do Google Sheets.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Lembrete de filtro */}
-        {lastSync && !filters.system && (
-          <Alert status="info" borderRadius="xl" mb="5" variant="left-accent">
-            <AlertIcon />
-            <AlertDescription fontSize="sm">
-              Selecione ao menos um <strong>Sistema</strong> nos filtros para habilitar a análise em lote.
             </AlertDescription>
           </Alert>
         )}
