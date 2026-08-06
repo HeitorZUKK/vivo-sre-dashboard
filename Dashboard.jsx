@@ -40,15 +40,26 @@ const SHEETS_API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 const ACCESS_PASSWORD = import.meta.env.VITE_ACCESS_PASSWORD || "";
 const SPREADSHEET_ID = import.meta.env.VITE_SPREADSHEET_ID || "1Ne5pMhMk0eXnZt9n6whQJi2BD9weUTo40INFHK5zUus";
 
-// Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha
+// Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha.
+// Fly e Atlas agora são modos separados. O Atlas já está pronto para uso futuro:
+// basta configurar VITE_SHEET_NAME_ATLAS e VITE_GEMINI_API_KEY_ATLAS quando houver planilha.
 const MODE_CONFIG = {
-  "Fly/Atlas": {
+  "Fly": {
     geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_FLY      || "",
     sheetName:  import.meta.env.VITE_SHEET_NAME_FLY          || "resultado",
-    systems:    ["Fly", "Atlas"],
-    label:      "Fly / Atlas",
-    colDate:    0,  // coluna A — única coluna de data na planilha Fly/Atlas
+    systems:    ["Fly"],
+    label:      "Fly",
+    colDate:    0,  // coluna A — data
     colComment: 1,  // coluna B — comentários
+  },
+  "Atlas": {
+    geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_ATLAS    || "",
+    sheetName:  import.meta.env.VITE_SHEET_NAME_ATLAS        || "",  // sem planilha ainda
+    systems:    ["Atlas"],
+    label:      "Atlas",
+    colDate:    0,  // ajustar quando a planilha do Atlas existir
+    colComment: 1,
+    naoConfigurado: !import.meta.env.VITE_SHEET_NAME_ATLAS,  // flag: planilha ainda não definida
   },
   "Valoriza": {
     geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_VALORIZA || "",
@@ -61,7 +72,7 @@ const MODE_CONFIG = {
 };
 
 // Modo padrão ao abrir o dashboard
-const DEFAULT_MODE = "Fly/Atlas";
+const DEFAULT_MODE = "Fly";
 
 // Configurações de análise em lote (análise SRE de causas/sugestões)
 // Análise em lote — agora processa 1 categoria por requisição (ver requestBulkAnalysis).
@@ -150,9 +161,9 @@ async function callGeminiMock(categories) {
 // =============================================================================
 
 const CLASSIFIER_CONFIG = {
-  // ── Fly / Atlas — erros técnicos de infraestrutura ──────────────────────────
-  "Fly/Atlas": {
-    detectSistema: (txt) => txt.includes("atlas") ? "Atlas" : "Fly",
+  // ── Fly — erros técnicos de infraestrutura ──────────────────────────────────
+  "Fly": {
+    detectSistema: () => "Fly",
     defaultCategoria: "Suporte Operacional Técnico Geral",
     rules: [
       { keywords: ["altitude", "decimal digit"],              sistema: null,    categoria: "Erro de Tipo: Alfabetivo em Campo Altitude (SOI)"           },
@@ -164,7 +175,18 @@ const CLASSIFIER_CONFIG = {
       { keywords: ["unique query", "empresa duplicada"],      sistema: null,    categoria: "Duplicidade de Registro: Empresa Duplicada no VivoGo"         },
       { keywords: ["subprocesso", "camunda", "modalidade em aberto"], sistema: null, categoria: "Violação de Regra BPM: Multiplas Modalidades na SOI"     },
       { keywords: ["botão", "permissão", "keycloak"],         sistema: null,    categoria: "Falha de Atribuição: Grupo Designado no Camunda Workflow"     },
-      { keywords: ["atlas"],                                  sistema: "Atlas", categoria: "Suporte Atlas Geral"                                         },
+    ],
+  },
+
+  // ── Atlas — ainda sem regras próprias. Reutiliza a base do Fly por enquanto. ─
+  // Quando o Atlas tiver planilha e padrões próprios, adicione as regras aqui.
+  "Atlas": {
+    detectSistema: () => "Atlas",
+    defaultCategoria: "Suporte Operacional Técnico Geral",
+    rules: [
+      { keywords: ["altitude", "decimal digit"],              sistema: null,    categoria: "Erro de Tipo: Alfabetivo em Campo Altitude (SOI)"           },
+      { keywords: ["altura estrutura", "virgula", "vírgula"], sistema: null,    categoria: "Erro de Sintaxe: Vírgula em Altura Estrutura (SOI)"          },
+      { keywords: ["distrito", "municipio", "município"],     sistema: null,    categoria: "Divergência Cadastral: Distrito/Município ausente no Science" },
     ],
   },
 
@@ -203,11 +225,11 @@ const CLASSIFIER_CONFIG = {
  * Prioridade: 1) tag CATEGORIA: explícita → 2) keyword → 3) default do modo
  *
  * @param {string} texto  - Texto do comentário
- * @param {string} mode   - "Fly/Atlas" | "Valoriza"
+ * @param {string} mode   - "Fly", "Atlas" ou "Valoriza"
  * @returns {{ sistema: string, categoria: string }}
  */
 function classificarComentario(texto, mode) {
-  const cfg = CLASSIFIER_CONFIG[mode] || CLASSIFIER_CONFIG["Fly/Atlas"];
+  const cfg = CLASSIFIER_CONFIG[mode] || CLASSIFIER_CONFIG["Fly"];
   const txt = (texto || "").toLowerCase();
   const sistema = cfg.detectSistema(txt);
 
@@ -268,7 +290,7 @@ function normText(str) {
  * Novas categorias que surgirem podem ser adicionadas aqui.
  */
 const CATEGORY_ALIASES = {
-  "Fly/Atlas": {
+  "Fly": {
     // VENDOR
     "impossibilitando vendor":    "IMPOSSIBILITANDO VENDOR",
     "vendor impossibilitado":     "IMPOSSIBILITANDO VENDOR",
@@ -367,7 +389,7 @@ const CATEGORY_ALIASES = {
  * Se não encontrar alias, aplica capitalização padronizada.
  *
  * @param {string} categoria - Texto bruto da categoria (vindo da tag CATEGORIA:)
- * @param {string} mode      - "Fly/Atlas" | "Valoriza"
+ * @param {string} mode      - "Fly", "Atlas" ou "Valoriza"
  * @returns {string}         - Nome canônico padronizado
  */
 // Registro de categorias canônicas já vistas nesta sessão de carregamento.
@@ -414,7 +436,9 @@ function similaridade(a, b) {
 const SIMILARITY_THRESHOLD = 0.82;
 
 function normalizarCategoria(categoria, mode) {
-  const aliases = CATEGORY_ALIASES[mode] || {};
+  // Atlas reutiliza os aliases do Fly (mesma natureza técnica)
+  const aliasMode = mode === "Atlas" ? "Fly" : mode;
+  const aliases = CATEGORY_ALIASES[aliasMode] || {};
   const norm    = normText(categoria);
 
   // 1. Busca exata no mapa de aliases
@@ -587,7 +611,7 @@ function calcularSubgrupos(tickets) {
 /**
  * Busca os dados da planilha para o modo selecionado.
  * Usa a aba e o classificador corretos para cada modo.
- * @param {string} mode - "Fly/Atlas" | "Valoriza"
+ * @param {string} mode - "Fly", "Atlas" ou "Valoriza"
  */
 async function fetchSheetData(mode) {
   if (!SHEETS_API_KEY || !SPREADSHEET_ID) {
@@ -1742,7 +1766,7 @@ function clearStoredAnalyses(mode) {
 
 function DashboardApp() {
   // ── Estado ──────────────────────────────────────────────────────────────────
-  const [activeMode,      setActiveMode]      = useState(DEFAULT_MODE); // "Fly/Atlas" | "Valoriza"
+  const [activeMode,      setActiveMode]      = useState(DEFAULT_MODE); // "Fly", "Atlas" ou "Valoriza"
   const [data,            setData]            = useState({});
   const [sheetLoading,    setSheetLoading]    = useState(false);
   const [sheetError,      setSheetError]      = useState(null);
@@ -1843,6 +1867,18 @@ function DashboardApp() {
   // ── Ações ────────────────────────────────────────────────────────────────────
 
   const loadSheetData = useCallback(async () => {
+    // Modo sem planilha configurada (ex: Atlas ainda não implantado)
+    if (MODE_CONFIG[activeMode]?.naoConfigurado) {
+      setSheetError(`O modo ${MODE_CONFIG[activeMode].label} ainda não tem planilha configurada. Defina VITE_SHEET_NAME_ATLAS e VITE_GEMINI_API_KEY_ATLAS quando a planilha estiver pronta.`);
+      toast({
+        title:       `${MODE_CONFIG[activeMode].label} em preparação`,
+        description: "Este sistema ainda não foi configurado. A estrutura já está pronta para quando houver planilha.",
+        status:      "info",
+        duration:    5000,
+      });
+      return;
+    }
+
     setSheetLoading(true);
     setSheetError(null);
     try {
