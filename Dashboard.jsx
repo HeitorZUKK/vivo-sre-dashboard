@@ -1304,7 +1304,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
 // ── AnalysisCard ──────────────────────────────────────────────────────────────
 
-function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequestAnalysis, isLoading }) {
+function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading }) {
   const bg           = useColorModeValue("white", "gray.800");
   const borderColor  = useColorModeValue("gray.200", "gray.700");
   const statBg       = useColorModeValue("gray.50", "gray.700");
@@ -1330,7 +1330,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
     return categoryData.tickets.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
   }, [categoryData.tickets, selectedSubgroup]);
 
-  const trend            = getMonthlyTrend(categoryData.tickets);
+  const trend            = getMonthlyTrend(fullTickets || categoryData.tickets);
   const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
   const paginatedTickets = visibleTickets.slice(
     ticketPage * TICKETS_PER_PAGE,
@@ -1386,7 +1386,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, analysis, onRequ
           {[30, 60, 90].map((d) => (
             <Box key={d} textAlign="center" bg={statBg} borderRadius="lg" p="2">
               <Text fontSize="lg" fontWeight="700" color="purple.400">
-                {countInRange(categoryData.tickets, d)}
+                {countInRange(fullTickets || categoryData.tickets, d)}
               </Text>
               <Text fontSize="10px" color="gray.500">{d}d</Text>
             </Box>
@@ -1806,12 +1806,15 @@ function DashboardApp() {
         const key      = `${sys}::${cat}`;
         const analysis = analyses[key];
         if (filters.priority && analysis?.prioridade !== filters.priority) return;
-        cards.push({ sys, cat, val, key, analysis });
+        // fullVal = histórico completo da categoria (do `data`, não do periodData filtrado).
+        // Usado para as janelas 30/60/90 do card, que devem sempre refletir o histórico.
+        const fullVal = data[sys]?.[cat] || val;
+        cards.push({ sys, cat, val, fullVal, key, analysis });
       });
     });
     // Ordena do maior para o menor volume de chamados
     return cards.sort((a, b) => b.val.tickets.length - a.val.tickets.length);
-  }, [periodData, filteredSystems, filters, analyses]);
+  }, [periodData, data, filteredSystems, filters, analyses]);
 
   const totalTickets = useMemo(() => {
     let t = 0;
@@ -2420,12 +2423,13 @@ function DashboardApp() {
                     )}
                   </Flex>
                   <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing="4">
-                    {filteredCards.map(({ sys, cat, val, key, analysis }) => (
+                    {filteredCards.map(({ sys, cat, val, fullVal, key, analysis }) => (
                       <AnalysisCard
                         key={key}
                         systemName={sys}
                         categoryName={cat}
                         categoryData={val}
+                        fullTickets={fullVal.tickets}
                         analysis={analysis}
                         isLoading={!!loadingKeys[key]}
                         onRequestAnalysis={() => requestAnalysis(sys, cat)}
