@@ -941,6 +941,20 @@ async function callGeminiForAnalysis(mode, system, categories, geminiKey) {
   return callGemini(buildAnalysisPrompt(mode, system, categories), geminiKey);
 }
 
+/**
+ * Pede à IA para subcategorizar os chamados de uma categoria.
+ * Retorna { subcategorias: [{ nome, descricao, ids }] } ou null.
+ */
+async function callGeminiForSubgroups(mode, categoryName, tickets, geminiKey) {
+  const ticketList = ticketsForSubgrouping(tickets);
+  if (ticketList.length === 0) return null;
+  const result = await callGemini(buildSubgroupPrompt(mode, categoryName, ticketList), geminiKey);
+  // A resposta pode vir como { subcategorias: [...] } ou direto como array
+  if (result?.subcategorias) return result.subcategorias;
+  if (Array.isArray(result)) return result;
+  return null;
+}
+
 // =============================================================================
 // SEÇÃO 5 — UTILITÁRIOS
 // Funções puras de cálculo — sem dependências de React.
@@ -979,6 +993,50 @@ function sampleTickets(tickets, max = 5) {
   if (unique.length <= max) return unique.map((t) => t.description);
   const step = Math.floor(unique.length / max);
   return Array.from({ length: max }, (_, i) => unique[i * step].description);
+}
+
+/**
+ * Monta a lista de chamados (com ID e texto) para a IA subcategorizar.
+ * Limita o texto de cada chamado para controlar tokens, mas envia TODOS
+ * (até um teto), pois a subcategorização precisa ver o conjunto completo.
+ */
+function ticketsForSubgrouping(tickets, maxTickets = 40, maxCharsEach = 200) {
+  return tickets.slice(0, maxTickets).map((t) => ({
+    id:    t.id.replace("#", ""),
+    texto: t.description.trim().substring(0, maxCharsEach),
+  }));
+}
+
+/**
+ * Prompt que pede à IA para agrupar os chamados de UMA categoria em
+ * subcategorias detalhadas — no estilo da planilha de referência.
+ */
+function buildSubgroupPrompt(mode, categoryName, ticketList) {
+  const contexto = mode === "Valoriza"
+    ? "Você é um especialista em operações do programa Vivo Valoriza (benefícios do App Vivo)."
+    : "Você é um Engenheiro SRE do ecossistema Vivo Fly (gestão de sites: SOI, SCI, FCU, candidatos, Camunda BPM).";
+
+  return `${contexto}
+
+Abaixo estão os chamados reais da categoria "${categoryName}". Sua tarefa é AGRUPAR esses chamados em SUBCATEGORIAS específicas e técnicas, com base no que cada um realmente descreve.
+
+REGRAS:
+- Crie de 2 a 8 subcategorias, cada uma representando um tipo distinto de problema dentro da categoria
+- Cada subcategoria deve ter um nome curto e técnico (ex: "Cancelamento", "Erro ao definir modalidade (Camunda)", "Botão indisponível (sem permissão)")
+- Escreva uma descrição de 1 frase explicando a causa raiz daquele subtipo
+- Liste os IDs dos chamados que pertencem a cada subcategoria
+- Um chamado pertence a exatamente UMA subcategoria
+- Se houver chamados que não se encaixam, agrupe em "Outros / Diversos"
+
+CHAMADOS (id + texto):
+${JSON.stringify(ticketList, null, 2)}
+
+RETORNE APENAS JSON PURO, SEM MARKDOWN, NESTE FORMATO EXATO:
+{
+  "subcategorias": [
+    { "nome": "...", "descricao": "...", "ids": ["6962", "6963"] }
+  ]
+}`;
 }
 
 function getMonthlyTrend(tickets) {
@@ -1324,7 +1382,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
 // ── AnalysisCard ──────────────────────────────────────────────────────────────
 
-function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading }) {
+function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, onRequestSubgroups, isLoading, isSubgroupLoading }) {
   const bg           = useColorModeValue("white", "gray.800");
   const borderColor  = useColorModeValue("gray.200", "gray.700");
   const statBg       = useColorModeValue("gray.50", "gray.700");
@@ -1336,19 +1394,42 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   const [expandedTicket, setExpandedTicket] = useState(null);
   const [ticketPage, setTicketPage]         = useState(0);
   const [selectedSubgroup, setSelectedSubgroup] = useState(null); // filtra tabela por subgrupo
+
+  // Subgrupos da IA (se a análise os gerou) têm prioridade sobre a dedução por texto.
+  // Formato IA: [{ nome, descricao, ids }]. Convertidos para o formato de exibição.
+  const subgruposIA = useMemo(() => {
+    if (!analysis?.subcategorias?.length) return null;
+    const total = categoryData.tickets.length || 1;
+    return analysis.subcategorias.map((s) => ({
+      label:  s.nome,
+      desc:   s.descricao,
+      ids:    (s.ids || []).map((id) => String(id).replace("#", "")),
+      count:  (s.ids || []).length,
+      pct:    Math.round(((s.ids || []).length / total) * 100),
+      fromIA: true,
+    })).sort((a, b) => b.count - a.count);
+  }, [analysis, categoryData.tickets.length]);
+
+  const subgruposTexto = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
+  const subgrupos = subgruposIA || subgruposTexto;
   const [editingDesc, setEditingDesc]       = useState(false);
   const [descOverride, setDescOverride]     = useState(null);     // legenda editada pelo usuário
 
   // Descrição: usa a editada se existir, senão a automática
   const descricaoAuto = getCategoryDescription(categoryName);
   const descricao     = descOverride !== null ? descOverride : descricaoAuto;
-  const subgrupos     = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
 
-  // Tickets filtrados pelo subgrupo selecionado (se houver)
+  // Tickets filtrados pelo subgrupo selecionado (se houver).
+  // Subgrupo da IA filtra por lista de IDs; subgrupo de texto filtra por dedução.
   const visibleTickets = useMemo(() => {
     if (!selectedSubgroup) return categoryData.tickets;
+    const sg = subgrupos.find((s) => s.label === selectedSubgroup);
+    if (sg?.fromIA) {
+      const idSet = new Set(sg.ids);
+      return categoryData.tickets.filter((t) => idSet.has(t.id.replace("#", "")));
+    }
     return categoryData.tickets.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
-  }, [categoryData.tickets, selectedSubgroup]);
+  }, [categoryData.tickets, selectedSubgroup, subgrupos]);
 
   const trend            = getMonthlyTrend(fullTickets || categoryData.tickets);
   const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
@@ -1490,13 +1571,30 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               )}
             </Box>
 
-            {/* Subgrupos deduzidos automaticamente — clicáveis para filtrar a tabela */}
+            {/* Botão para gerar subcategorias detalhadas via IA (sob demanda, gasta tokens) */}
+            {analysis && !subgruposIA && (
+              <Button
+                size="xs" variant="outline" colorScheme="purple" borderRadius="lg" mb="4" w="full"
+                isLoading={isSubgroupLoading} loadingText="Detalhando subcategorias…"
+                onClick={onRequestSubgroups}
+              >
+                ✨ Detalhar subcategorias com IA
+              </Button>
+            )}
+
+            {/* Subgrupos — da IA (detalhados) ou deduzidos por texto. Clicáveis para filtrar. */}
             {subgrupos.length > 1 && (
               <Box mb="4">
                 <Flex justify="space-between" align="center" mb="2">
-                  <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase">
-                    Tipos de chamado nesta categoria
-                  </Text>
+                  <HStack spacing="2">
+                    <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase">
+                      Tipos de chamado nesta categoria
+                    </Text>
+                    {subgruposIA
+                      ? <Badge colorScheme="purple" variant="subtle" fontSize="9px" borderRadius="full">✨ IA</Badge>
+                      : <Badge colorScheme="gray" variant="subtle" fontSize="9px" borderRadius="full">automático</Badge>
+                    }
+                  </HStack>
                   {selectedSubgroup && (
                     <Button size="xs" variant="ghost" colorScheme="purple" height="18px" fontSize="10px"
                       onClick={() => { setSelectedSubgroup(null); setTicketPage(0); }}>
@@ -1509,7 +1607,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                     const isActive = selectedSubgroup === sg.label;
                     return (
                       <Box
-                        key={sg.label} cursor="pointer" p="1.5" borderRadius="md"
+                        key={sg.label} cursor="pointer" p="2" borderRadius="md"
                         bg={isActive ? "purple.50" : "transparent"}
                         borderWidth="1px" borderColor={isActive ? "purple.300" : "transparent"}
                         _hover={{ bg: isActive ? "purple.50" : statBg }}
@@ -1519,11 +1617,14 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                         }}
                       >
                         <Flex justify="space-between" mb="0.5">
-                          <Text fontSize="12px" color={textColor} fontWeight={isActive ? "600" : "400"}>
+                          <Text fontSize="12px" color={textColor} fontWeight={isActive ? "600" : "500"}>
                             {isActive ? "▸ " : ""}{sg.label}
                           </Text>
-                          <Text fontSize="11px" color="gray.500">{sg.count} ({sg.pct}%)</Text>
+                          <Text fontSize="11px" color="gray.500" whiteSpace="nowrap" ml="2">{sg.count} ({sg.pct}%)</Text>
                         </Flex>
+                        {sg.desc && (
+                          <Text fontSize="11px" color="gray.500" mb="1.5" lineHeight="1.4">{sg.desc}</Text>
+                        )}
                         <Box bg={statBg} borderRadius="full" h="6px" overflow="hidden">
                           <Box bg={isActive ? "purple.500" : "purple.400"} h="6px" borderRadius="full" width={`${sg.pct}%`} />
                         </Box>
@@ -1769,6 +1870,7 @@ function DashboardApp() {
   const [lastSync,        setLastSync]        = useState(null);
   const [analyses,        setAnalyses]        = useState(() => loadStoredAnalyses(DEFAULT_MODE));
   const [loadingKeys,     setLoadingKeys]     = useState({});
+  const [subgroupLoading, setSubgroupLoading] = useState({}); // loading da subcategorização por card
   const [bulkLoading,     setBulkLoading]     = useState(false);
   const [mockMode,        setMockMode]        = useState(false); // quando true, substitui Gemini por dados simulados
   const [failedCats,      setFailedCats]      = useState([]);    // categorias que falharam na última análise em lote
@@ -1953,7 +2055,44 @@ function DashboardApp() {
     } finally {
       setLoadingKeys((prev) => ({ ...prev, [key]: false }));
     }
-  }, [data, filters.period, analyzeCategories, toast]);
+  }, [data, filters.period, analyzeCategories, mockMode, activeMode, toast]);
+
+  // Subcategorização sob demanda — roda a IA para detalhar os subtipos de UMA categoria.
+  // Gasta tokens à parte, por isso é acionada por botão dentro do card.
+  const requestSubgroups = useCallback(async (system, categoryName) => {
+    const key     = `${system}::${categoryName}`;
+    const catData  = data[system]?.[categoryName];
+    if (!catData) return;
+
+    const period           = parseInt(filters.period || "90");
+    const ticketsNoPeriodo = getTicketsInPeriod(catData.tickets, period);
+    if (ticketsNoPeriodo.length === 0) {
+      toast({ title: "Sem chamados no período", status: "warning", duration: 3000 });
+      return;
+    }
+
+    setSubgroupLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const geminiKey = MODE_CONFIG[activeMode]?.geminiKey || "";
+      const subs = mockMode
+        ? null
+        : await callGeminiForSubgroups(activeMode, categoryName, ticketsNoPeriodo, geminiKey);
+
+      if (subs && subs.length > 0) {
+        setAnalyses((prev) => {
+          const atual = prev[key] || {};
+          return { ...prev, [key]: { ...atual, subcategorias: subs } };
+        });
+        toast({ title: "Subcategorias geradas", description: `${subs.length} subtipos identificados.`, status: "success", duration: 3000 });
+      } else {
+        toast({ title: mockMode ? "Indisponível no modo Mock" : "Nenhuma subcategoria identificada", status: "info", duration: 3000 });
+      }
+    } catch (e) {
+      toast({ title: "Erro ao detalhar subcategorias", description: String(e.message), status: "error", duration: 5000 });
+    } finally {
+      setSubgroupLoading((prev) => ({ ...prev, [key]: false }));
+    }
+  }, [data, filters.period, mockMode, activeMode, toast]);
 
   // `onlyThese` (opcional): array de nomes de categorias para analisar apenas essas.
   // Usado pelo botão "Repetir falhas" — ignora o filtro e o "já analisadas".
@@ -2086,7 +2225,7 @@ function DashboardApp() {
     } finally {
       setBulkLoading(false);
     }
-  }, [data, filters.system, filters.period, filters.categories, analyses, analyzeCategories, toast]);
+  }, [data, filters.system, filters.period, filters.categories, analyses, analyzeCategories, mockMode, activeMode, toast]);
 
   // Gera e baixa um relatório HTML formatado para impressão/PDF
   // com apenas as categorias que já foram analisadas pela IA.
@@ -2464,6 +2603,8 @@ function DashboardApp() {
                         analysis={analysis}
                         isLoading={!!loadingKeys[key]}
                         onRequestAnalysis={() => requestAnalysis(sys, cat)}
+                        onRequestSubgroups={() => requestSubgroups(sys, cat)}
+                        isSubgroupLoading={!!subgroupLoading[key]}
                       />
                     ))}
                   </SimpleGrid>
