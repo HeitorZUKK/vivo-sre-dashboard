@@ -12,6 +12,7 @@ import {
   Alert, AlertIcon, AlertDescription, SimpleGrid, Card,
   CardHeader, CardBody, CardFooter,
   FormControl, FormLabel,
+  Menu, MenuButton, MenuList, MenuItem,
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
 
@@ -150,8 +151,30 @@ async function callGeminiMock(categories) {
   });
   return result;
 }
-// =============================================================================
-// SEÇÃO 2 — CLASSIFICAÇÃO DE CHAMADOS
+
+/**
+ * Simula a análise detalhada por subtipo no modo Mock — sem chamar o Gemini.
+ * Divide os chamados em 2-3 subtipos fictícios com causa raiz e sugestão.
+ */
+async function callGeminiMockSubgroups(categoryName, tickets) {
+  await new Promise((r) => setTimeout(r, 1000));
+  const ids = tickets.map((t) => t.id.replace("#", ""));
+  const terco = Math.ceil(ids.length / 3) || 1;
+  const subs = [];
+  const fatias = [ids.slice(0, terco), ids.slice(terco, terco * 2), ids.slice(terco * 2)];
+  const nomes  = ["Subtipo A (mock)", "Subtipo B (mock)", "Outros / Diversos (mock)"];
+  fatias.forEach((fatia, i) => {
+    if (fatia.length === 0) return;
+    subs.push({
+      nome:       nomes[i],
+      motivo:     `[MOCK] Causa raiz simulada para ${fatia.length} chamados de "${categoryName.substring(0, 30)}". Desative o Mock para análise real.`,
+      sugestao:   `[MOCK] Sugestão de automação simulada. No modo real, o Gemini analisaria o texto dos chamados.`,
+      prioridade: fatia.length > 8 ? "Alta" : fatia.length > 3 ? "Média" : "Baixa",
+      ids:        fatia,
+    });
+  });
+  return subs;
+}
 //
 // Cada modo tem suas próprias regras de keyword e sistema padrão.
 // Novos modos podem ser adicionados criando uma entrada em CLASSIFIER_CONFIG.
@@ -722,7 +745,7 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
  * @param {string} promptText
  * @param {string} geminiKey  - chave da API do modo (Fly/Atlas ou Valoriza)
  */
-async function callGemini(promptText, geminiKey) {
+async function callGemini(promptText, geminiKey, maxTokens = 4096) {
   if (!geminiKey) {
     throw new Error(
       "Chave Gemini não configurada para este modo. " +
@@ -732,9 +755,7 @@ async function callGemini(promptText, geminiKey) {
 
   const body = JSON.stringify({
     contents: [{ parts: [{ text: promptText }] }],
-    // 4096 dá folga suficiente para a resposta não ser cortada no meio.
-    // Respostas truncadas geravam JSON inválido e análises vazias.
-    generationConfig: { maxOutputTokens: 4096, temperature: 0.4 },
+    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.4 },
   });
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -948,10 +969,18 @@ async function callGeminiForAnalysis(mode, system, categories, geminiKey) {
 async function callGeminiForSubgroups(mode, categoryName, tickets, geminiKey) {
   const ticketList = ticketsForSubgrouping(tickets);
   if (ticketList.length === 0) return null;
-  const result = await callGemini(buildSubgroupPrompt(mode, categoryName, ticketList), geminiKey);
+  // Usa 8192 tokens — a resposta tem vários subtipos + listas de IDs e é maior
+  const result = await callGemini(buildSubgroupPrompt(mode, categoryName, ticketList), geminiKey, 8192);
+  console.log(`[SUBGRUPOS] "${categoryName}" — resposta bruta:`, result);
   // A resposta pode vir como { subcategorias: [...] } ou direto como array
-  if (result?.subcategorias) return result.subcategorias;
+  if (result?.subcategorias && Array.isArray(result.subcategorias)) return result.subcategorias;
   if (Array.isArray(result)) return result;
+  // Tenta achar qualquer array dentro do objeto (nome de chave diferente)
+  if (result && typeof result === "object") {
+    for (const val of Object.values(result)) {
+      if (Array.isArray(val) && val.length > 0 && val[0]?.nome) return val;
+    }
+  }
   return null;
 }
 
@@ -1000,7 +1029,7 @@ function sampleTickets(tickets, max = 5) {
  * Limita o texto de cada chamado para controlar tokens, mas envia TODOS
  * (até um teto), pois a subcategorização precisa ver o conjunto completo.
  */
-function ticketsForSubgrouping(tickets, maxTickets = 40, maxCharsEach = 200) {
+function ticketsForSubgrouping(tickets, maxTickets = 35, maxCharsEach = 180) {
   return tickets.slice(0, maxTickets).map((t) => ({
     id:    t.id.replace("#", ""),
     texto: t.description.trim().substring(0, maxCharsEach),
@@ -1008,25 +1037,30 @@ function ticketsForSubgrouping(tickets, maxTickets = 40, maxCharsEach = 200) {
 }
 
 /**
- * Prompt que pede à IA para agrupar os chamados de UMA categoria em
- * subcategorias detalhadas — no estilo da planilha de referência.
+ * Prompt de ANÁLISE DETALHADA POR SUBTIPO.
+ * A IA agrupa os chamados de uma categoria em subtipos e, para CADA subtipo,
+ * fornece causa raiz e sugestão de automação — no estilo da planilha de referência.
  */
 function buildSubgroupPrompt(mode, categoryName, ticketList) {
   const contexto = mode === "Valoriza"
-    ? "Você é um especialista em operações do programa Vivo Valoriza (benefícios do App Vivo)."
-    : "Você é um Engenheiro SRE do ecossistema Vivo Fly (gestão de sites: SOI, SCI, FCU, candidatos, Camunda BPM).";
+    ? `Você é um especialista em operações do programa Vivo Valoriza (benefícios do App Vivo).
+As sugestões devem focar em: melhoria de comunicação, FAQ, ajuste no fluxo do app, ou processo de triagem. Não use linguagem de infraestrutura técnica.`
+    : `Você é um Engenheiro de Confiabilidade de Sistemas (SRE) do ecossistema Vivo Fly.
+O Fly gerencia sites da Vivo: SOI (gestão de candidatos), SCI/FCU (fase contratual), Camunda BPM (workflow/stages), banco (tabelas sharing_outdoor_collo/bts, candidato, empresa).
+Padrões conhecidos: erro de altitude (campo com letras), município/distrito ausente no Science, [object Object] (caractere especial <br>), mapa não carrega (coordenadas positivas/com vírgula), Feign NULL (campo fcu preenchido ao disparar SCI), unique query result (empresa duplicada no VivoGo), subprocesso em andamento (múltiplas modalidades na SOI), botão não aparece (grupo Camunda ≠ grupo do usuário).
+As sugestões devem ser técnicas e acionáveis (automação, validação, regra de negócio).`;
 
   return `${contexto}
 
-Abaixo estão os chamados reais da categoria "${categoryName}". Sua tarefa é AGRUPAR esses chamados em SUBCATEGORIAS específicas e técnicas, com base no que cada um realmente descreve.
+Abaixo estão os chamados reais da categoria "${categoryName}". Sua tarefa é:
+1. AGRUPAR os chamados em SUBTIPOS específicos e técnicos (com base no que cada um descreve)
+2. Para CADA subtipo, fornecer a análise completa: causa raiz e sugestão de automação
 
 REGRAS:
-- Crie de 2 a 8 subcategorias, cada uma representando um tipo distinto de problema dentro da categoria
-- Cada subcategoria deve ter um nome curto e técnico (ex: "Cancelamento", "Erro ao definir modalidade (Camunda)", "Botão indisponível (sem permissão)")
-- Escreva uma descrição de 1 frase explicando a causa raiz daquele subtipo
-- Liste os IDs dos chamados que pertencem a cada subcategoria
-- Um chamado pertence a exatamente UMA subcategoria
-- Se houver chamados que não se encaixam, agrupe em "Outros / Diversos"
+- Crie de 2 a 8 subtipos, cada um representando um problema distinto dentro da categoria
+- Nome do subtipo: curto e técnico (ex: "Cancelamento de SCI", "Botão indisponível (sem permissão)", "Erro ao definir modalidade (Camunda)")
+- Um chamado pertence a exatamente UM subtipo; liste os IDs de cada um
+- Chamados que não se encaixam vão em "Outros / Diversos"
 
 CHAMADOS (id + texto):
 ${JSON.stringify(ticketList, null, 2)}
@@ -1034,9 +1068,16 @@ ${JSON.stringify(ticketList, null, 2)}
 RETORNE APENAS JSON PURO, SEM MARKDOWN, NESTE FORMATO EXATO:
 {
   "subcategorias": [
-    { "nome": "...", "descricao": "...", "ids": ["6962", "6963"] }
+    {
+      "nome": "Nome do subtipo",
+      "motivo": "Causa raiz técnica detalhada (1-2 frases)",
+      "sugestao": "Sugestão de automação ou correção concreta (1-2 frases)",
+      "prioridade": "Alta",
+      "ids": ["6962", "6963"]
+    }
   ]
-}`;
+}
+A "prioridade" deve ser exatamente "Alta", "Média" ou "Baixa" (Alta = muitos chamados ou bloqueia fluxo; Baixa = pontual).`;
 }
 
 function getMonthlyTrend(tickets) {
@@ -1382,7 +1423,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
 // ── AnalysisCard ──────────────────────────────────────────────────────────────
 
-function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, onRequestSubgroups, isLoading, isSubgroupLoading }) {
+function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading }) {
   const bg           = useColorModeValue("white", "gray.800");
   const borderColor  = useColorModeValue("gray.200", "gray.700");
   const statBg       = useColorModeValue("gray.50", "gray.700");
@@ -1399,16 +1440,19 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   // Formato IA: [{ nome, descricao, ids }]. Convertidos para o formato de exibição.
   const subgruposIA = useMemo(() => {
     if (!analysis?.subcategorias?.length) return null;
-    const total = categoryData.tickets.length || 1;
+    const total = analysis.subcategorias.reduce((acc, s) => acc + (s.ids?.length || 0), 0) || 1;
     return analysis.subcategorias.map((s) => ({
-      label:  s.nome,
-      desc:   s.descricao,
-      ids:    (s.ids || []).map((id) => String(id).replace("#", "")),
-      count:  (s.ids || []).length,
-      pct:    Math.round(((s.ids || []).length / total) * 100),
-      fromIA: true,
+      label:      s.nome,
+      desc:       s.descricao || null,
+      motivo:     s.motivo || null,
+      sugestao:   s.sugestao || null,
+      prioridade: s.prioridade || null,
+      ids:        (s.ids || []).map((id) => String(id).replace("#", "")),
+      count:      (s.ids || []).length,
+      pct:        Math.round(((s.ids || []).length / total) * 100),
+      fromIA:     true,
     })).sort((a, b) => b.count - a.count);
-  }, [analysis, categoryData.tickets.length]);
+  }, [analysis]);
 
   const subgruposTexto = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
   const subgrupos = subgruposIA || subgruposTexto;
@@ -1457,12 +1501,23 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
           <Box flex="1">
             <HStack mb="1" spacing="2">
               <Badge colorScheme="purple" variant="subtle" fontSize="10px">{systemName}</Badge>
-              {analysis && <PriorityBadge priority={analysis.prioridade} />}
+              {analysis?.subcategorias?.length > 0 && (
+                <Badge colorScheme="green" variant="subtle" fontSize="9px" borderRadius="full">
+                  ✨ {analysis.subcategorias.length} subtipos
+                </Badge>
+              )}
+              {analysis?.detailDays && (
+                <Badge colorScheme="gray" variant="subtle" fontSize="9px" borderRadius="full">
+                  {analysis.detailDays}d
+                </Badge>
+              )}
             </HStack>
             <Text fontWeight="600" fontSize="sm" lineHeight="1.4">
-              {analysis?.titulo || categoryName}
+              {categoryName}
             </Text>
-            <Text fontSize="11px" color="gray.500" mt="1" noOfLines={1}>{categoryName}</Text>
+            <Text fontSize="11px" color="gray.500" mt="1" noOfLines={2}>
+              {getCategoryDescription(categoryName) || " "}
+            </Text>
             {detalhesFreq.length > 0 && (
               <HStack mt="1" spacing="1" flexWrap="wrap">
                 {detalhesFreq.map((d) => (
@@ -1494,16 +1549,30 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
           ))}
         </SimpleGrid>
 
-        {analysis ? (
+        {analysis?.subcategorias?.length > 0 ? (
           <Box>
-            <Box mb="2">
-              <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase" mb="1">Causa raiz</Text>
-              <Text fontSize="12px" color={textColor} lineHeight="1.5">{analysis.motivo}</Text>
-            </Box>
-            <Box>
-              <Text fontSize="11px" fontWeight="600" color="teal.500" textTransform="uppercase" mb="1">Sugestão</Text>
-              <Text fontSize="12px" color={textColor} lineHeight="1.5">{analysis.sugestao}</Text>
-            </Box>
+            <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase" mb="2">
+              {analysis.subcategorias.length} subtipos identificados
+            </Text>
+            <VStack align="stretch" spacing="1">
+              {[...analysis.subcategorias]
+                .sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0))
+                .slice(0, 4)
+                .map((s, i) => (
+                  <Flex key={i} justify="space-between" fontSize="12px">
+                    <Text color={textColor} noOfLines={1} flex="1">{s.nome}</Text>
+                    <HStack spacing="1.5" ml="2" flexShrink={0}>
+                      {s.prioridade && <PriorityBadge priority={s.prioridade} />}
+                      <Text color="gray.500">{s.ids?.length || 0}</Text>
+                    </HStack>
+                  </Flex>
+                ))}
+              {analysis.subcategorias.length > 4 && (
+                <Text fontSize="11px" color="purple.400">
+                  +{analysis.subcategorias.length - 4} outros — ver detalhes
+                </Text>
+              )}
+            </VStack>
           </Box>
         ) : (
           <Box textAlign="center" py="3">
@@ -1513,9 +1582,15 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
             {isLoading ? (
               <Spinner size="sm" color="purple.500" />
             ) : (
-              <Button size="xs" colorScheme="purple" variant="outline" borderRadius="full" onClick={onRequestAnalysis}>
-                Solicitar análise IA
-              </Button>
+              <Menu>
+                <MenuButton as={Button} size="xs" colorScheme="purple" variant="outline" borderRadius="full">
+                  ✨ Análise detalhada ▾
+                </MenuButton>
+                <MenuList>
+                  <MenuItem fontSize="13px" onClick={() => onRequestAnalysis(7)}>Últimos 7 dias</MenuItem>
+                  <MenuItem fontSize="13px" onClick={() => onRequestAnalysis(30)}>Últimos 30 dias</MenuItem>
+                </MenuList>
+              </Menu>
             )}
           </Box>
         )}
@@ -1530,12 +1605,14 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
       <Modal isOpen={isOpen} onClose={onClose} size="3xl" scrollBehavior="inside">
         <ModalOverlay />
         <ModalContent borderRadius="xl">
-          <ModalHeader fontSize="md">{analysis?.titulo || categoryName}</ModalHeader>
+          <ModalHeader fontSize="md">{categoryName}</ModalHeader>
           <ModalCloseButton />
           <ModalBody pb="6">
             <HStack mb="4" spacing="2">
               <Badge colorScheme="purple">{systemName}</Badge>
-              {analysis && <PriorityBadge priority={analysis.prioridade} />}
+              {analysis?.subcategorias?.length > 0 && (
+                <Badge colorScheme="green" variant="subtle">✨ {analysis.subcategorias.length} subtipos</Badge>
+              )}
               <Text fontSize="xs" color="gray.500">{categoryData.tickets.length} chamados totais</Text>
             </HStack>
 
@@ -1571,18 +1648,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               )}
             </Box>
 
-            {/* Botão para gerar subcategorias detalhadas via IA (sob demanda, gasta tokens) */}
-            {analysis && !subgruposIA && (
-              <Button
-                size="xs" variant="outline" colorScheme="purple" borderRadius="lg" mb="4" w="full"
-                isLoading={isSubgroupLoading} loadingText="Detalhando subcategorias…"
-                onClick={onRequestSubgroups}
-              >
-                ✨ Detalhar subcategorias com IA
-              </Button>
-            )}
-
-            {/* Subgrupos — da IA (detalhados) ou deduzidos por texto. Clicáveis para filtrar. */}
+            {/* Subtipos analisados pela IA (causa raiz + sugestão de cada). Clicáveis para filtrar. */}
             {subgrupos.length > 1 && (
               <Box mb="4">
                 <Flex justify="space-between" align="center" mb="2">
@@ -1617,21 +1683,45 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                         }}
                       >
                         <Flex justify="space-between" mb="0.5">
-                          <Text fontSize="12px" color={textColor} fontWeight={isActive ? "600" : "500"}>
+                          <Text fontSize="12px" color={textColor} fontWeight={isActive ? "700" : "500"}>
                             {isActive ? "▸ " : ""}{sg.label}
                           </Text>
-                          <Text fontSize="11px" color="gray.500" whiteSpace="nowrap" ml="2">{sg.count} ({sg.pct}%)</Text>
+                          <HStack spacing="1.5" ml="2" flexShrink={0}>
+                            {sg.prioridade && <PriorityBadge priority={sg.prioridade} />}
+                            <Text fontSize="11px" color="gray.500" whiteSpace="nowrap">{sg.count} ({sg.pct}%)</Text>
+                          </HStack>
                         </Flex>
-                        {sg.desc && (
-                          <Text fontSize="11px" color="gray.500" mb="1.5" lineHeight="1.4">{sg.desc}</Text>
-                        )}
-                        <Box bg={statBg} borderRadius="full" h="6px" overflow="hidden">
+                        <Box bg={statBg} borderRadius="full" h="6px" overflow="hidden" mb={isActive ? "2" : "0"}>
                           <Box bg={isActive ? "purple.500" : "purple.400"} h="6px" borderRadius="full" width={`${sg.pct}%`} />
                         </Box>
+                        {/* Ao expandir um subtipo da IA, mostra causa raiz e sugestão */}
+                        {isActive && sg.fromIA && (sg.motivo || sg.sugestao) && (
+                          <VStack align="stretch" spacing="2" mt="2">
+                            {sg.motivo && (
+                              <Box p="2" bg={causeRootBg} borderRadius="md">
+                                <Text fontSize="10px" fontWeight="700" color="red.600" mb="0.5">CAUSA RAIZ</Text>
+                                <Text fontSize="12px" lineHeight="1.4">{sg.motivo}</Text>
+                              </Box>
+                            )}
+                            {sg.sugestao && (
+                              <Box p="2" bg={suggestionBg} borderRadius="md">
+                                <Text fontSize="10px" fontWeight="700" color="teal.600" mb="0.5">SUGESTÃO DE AUTOMAÇÃO</Text>
+                                <Text fontSize="12px" lineHeight="1.4">{sg.sugestao}</Text>
+                              </Box>
+                            )}
+                          </VStack>
+                        )}
+                        {/* Subtipo por texto (sem IA) mostra só a descrição curta */}
+                        {!sg.fromIA && sg.desc && (
+                          <Text fontSize="11px" color="gray.500" mt="1" lineHeight="1.4">{sg.desc}</Text>
+                        )}
                       </Box>
                     );
                   })}
                 </VStack>
+                <Text fontSize="10px" color="gray.400" mt="2">
+                  {subgruposIA ? "Clique num subtipo para ver a causa raiz e filtrar os chamados." : ""}
+                </Text>
                 {selectedSubgroup && (
                   <Text fontSize="10px" color="purple.500" mt="1">
                     Mostrando apenas chamados do tipo "{selectedSubgroup}" na tabela abaixo.
@@ -1646,19 +1736,6 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               options={areaChartOptions(trend.map((t) => t.label), "Tendência mensal")}
               series={[{ name: "Chamados", data: trend.map((t) => t.count) }]}
             />
-
-            {analysis && (
-              <Box mt="4">
-                <Box mb="3" p="3" bg={causeRootBg} borderRadius="lg">
-                  <Text fontSize="11px" fontWeight="700" color="red.600" mb="1">CAUSA RAIZ</Text>
-                  <Text fontSize="13px">{analysis.motivo}</Text>
-                </Box>
-                <Box p="3" bg={suggestionBg} borderRadius="lg">
-                  <Text fontSize="11px" fontWeight="700" color="teal.600" mb="1">SUGESTÃO DE AUTOMAÇÃO</Text>
-                  <Text fontSize="13px">{analysis.sugestao}</Text>
-                </Box>
-              </Box>
-            )}
 
             <Divider my="4" />
 
@@ -1870,7 +1947,7 @@ function DashboardApp() {
   const [lastSync,        setLastSync]        = useState(null);
   const [analyses,        setAnalyses]        = useState(() => loadStoredAnalyses(DEFAULT_MODE));
   const [loadingKeys,     setLoadingKeys]     = useState({});
-  const [subgroupLoading, setSubgroupLoading] = useState({}); // loading da subcategorização por card
+  const [lastDetailDays,  setLastDetailDays]  = useState(30); // janela usada na última análise em lote
   const [bulkLoading,     setBulkLoading]     = useState(false);
   const [mockMode,        setMockMode]        = useState(false); // quando true, substitui Gemini por dados simulados
   const [failedCats,      setFailedCats]      = useState([]);    // categorias que falharam na última análise em lote
@@ -2021,18 +2098,19 @@ function DashboardApp() {
     [mockMode, activeMode]
   );
 
-  const requestAnalysis = useCallback(async (system, categoryName) => {
+  // Análise detalhada por subtipo — a IA quebra a categoria em subtipos e dá
+  // causa raiz + sugestão de cada um. `detailDays` é 7 ou 30 (janela da análise).
+  const requestAnalysis = useCallback(async (system, categoryName, detailDays = 30) => {
     const key     = `${system}::${categoryName}`;
     const catData = data[system]?.[categoryName];
     if (!catData) return;
 
-    const period           = parseInt(filters.period || "90");
-    const ticketsNoPeriodo = getTicketsInPeriod(catData.tickets, period);
+    const ticketsNoPeriodo = getTicketsInPeriod(catData.tickets, detailDays);
 
     if (ticketsNoPeriodo.length === 0) {
       toast({
         title:       "Sem chamados no período",
-        description: `Nenhum chamado de "${categoryName.substring(0, 40)}…" nos últimos ${period} dias.`,
+        description: `Nenhum chamado de "${categoryName.substring(0, 40)}…" nos últimos ${detailDays} dias.`,
         status:      "warning",
         duration:    4000,
       });
@@ -2041,62 +2119,32 @@ function DashboardApp() {
 
     setLoadingKeys((prev) => ({ ...prev, [key]: true }));
     try {
-      const result = await analyzeCategories(system, [{
-        name:    categoryName,
-        samples: sampleTickets(ticketsNoPeriodo, 5),
-        total:   ticketsNoPeriodo.length,
-        last30:  countInRange(ticketsNoPeriodo, 30),
-      }]);
-      const analysis = normalizeAnalysisResult(result, categoryName);
-      setAnalyses((prev) => ({ ...prev, [key]: analysis }));
-      toast({ title: "Análise concluída", description: categoryName.substring(0, 50) + "…", status: "success", duration: 3000 });
+      const geminiKey = MODE_CONFIG[activeMode]?.geminiKey || "";
+      const subs = mockMode
+        ? await callGeminiMockSubgroups(categoryName, ticketsNoPeriodo)
+        : await callGeminiForSubgroups(activeMode, categoryName, ticketsNoPeriodo, geminiKey);
+
+      if (subs && subs.length > 0) {
+        const analysis = {
+          detailDays,
+          analisadoEm:   new Date().toLocaleString("pt-BR"),
+          subcategorias: subs,
+        };
+        setAnalyses((prev) => ({ ...prev, [key]: analysis }));
+        toast({ title: "Análise detalhada concluída", description: `${subs.length} subtipos em "${categoryName.substring(0, 35)}…" (${detailDays}d)`, status: "success", duration: 3500 });
+      } else {
+        toast({ title: "Nenhum subtipo identificado", description: "A IA não conseguiu detalhar esta categoria.", status: "warning", duration: 4000 });
+      }
     } catch (e) {
       toast({ title: "Erro na análise IA", description: String(e.message), status: "error", duration: 5000 });
     } finally {
       setLoadingKeys((prev) => ({ ...prev, [key]: false }));
     }
-  }, [data, filters.period, analyzeCategories, mockMode, activeMode, toast]);
+  }, [data, mockMode, activeMode, toast]);
 
-  // Subcategorização sob demanda — roda a IA para detalhar os subtipos de UMA categoria.
-  // Gasta tokens à parte, por isso é acionada por botão dentro do card.
-  const requestSubgroups = useCallback(async (system, categoryName) => {
-    const key     = `${system}::${categoryName}`;
-    const catData  = data[system]?.[categoryName];
-    if (!catData) return;
-
-    const period           = parseInt(filters.period || "90");
-    const ticketsNoPeriodo = getTicketsInPeriod(catData.tickets, period);
-    if (ticketsNoPeriodo.length === 0) {
-      toast({ title: "Sem chamados no período", status: "warning", duration: 3000 });
-      return;
-    }
-
-    setSubgroupLoading((prev) => ({ ...prev, [key]: true }));
-    try {
-      const geminiKey = MODE_CONFIG[activeMode]?.geminiKey || "";
-      const subs = mockMode
-        ? null
-        : await callGeminiForSubgroups(activeMode, categoryName, ticketsNoPeriodo, geminiKey);
-
-      if (subs && subs.length > 0) {
-        setAnalyses((prev) => {
-          const atual = prev[key] || {};
-          return { ...prev, [key]: { ...atual, subcategorias: subs } };
-        });
-        toast({ title: "Subcategorias geradas", description: `${subs.length} subtipos identificados.`, status: "success", duration: 3000 });
-      } else {
-        toast({ title: mockMode ? "Indisponível no modo Mock" : "Nenhuma subcategoria identificada", status: "info", duration: 3000 });
-      }
-    } catch (e) {
-      toast({ title: "Erro ao detalhar subcategorias", description: String(e.message), status: "error", duration: 5000 });
-    } finally {
-      setSubgroupLoading((prev) => ({ ...prev, [key]: false }));
-    }
-  }, [data, filters.period, mockMode, activeMode, toast]);
-
-  // `onlyThese` (opcional): array de nomes de categorias para analisar apenas essas.
-  // Usado pelo botão "Repetir falhas" — ignora o filtro e o "já analisadas".
-  const requestBulkAnalysis = useCallback(async (onlyThese = null) => {
+  // `detailDays` (7 ou 30): janela da análise detalhada.
+  // `onlyThese` (opcional): array de nomes de categorias — usado por "Repetir falhas".
+  const requestBulkAnalysis = useCallback(async (detailDays = 30, onlyThese = null) => {
     if (!filters.system) {
       toast({ title: "Selecione um sistema", description: "Configure o filtro antes de solicitar análise em lote.", status: "warning", duration: 4000 });
       return;
@@ -2105,7 +2153,7 @@ function DashboardApp() {
     setFailedCats([]);
     try {
       const sys    = filters.system;
-      const period = parseInt(filters.period || "90");
+      const period = detailDays; // análise detalhada usa a janela escolhida (7 ou 30)
 
       const isRetry      = Array.isArray(onlyThese) && onlyThese.length > 0;
       const selectedCats = filters.categories; // [] = todas, [x,y] = apenas essas
@@ -2161,14 +2209,16 @@ function DashboardApp() {
         duration:    5000,
       });
 
-      // Analisa UMA categoria por requisição — elimina ambiguidade de matching.
+      // Analisa UMA categoria por requisição, gerando os subtipos com causa raiz.
       // Se a resposta vier vazia/truncada, tenta novamente até ANALYSIS_RETRIES vezes.
       const ANALYSIS_RETRIES = 3;
       let totalAnalysed = 0;
       const falharam    = [];
+      const geminiKey   = MODE_CONFIG[activeMode]?.geminiKey || "";
 
       for (let i = 0; i < allCats.length; i++) {
         const cat = allCats[i];
+        const ticketsCat = getTicketsInPeriod(data[sys]?.[cat.name]?.tickets || [], detailDays);
 
         toast({
           title:       `Analisando ${i + 1} de ${allCats.length}…`,
@@ -2181,16 +2231,23 @@ function DashboardApp() {
 
         for (let tentativa = 1; tentativa <= ANALYSIS_RETRIES && !salvou; tentativa++) {
           try {
-            const result   = await analyzeCategories(sys, [cat]);
-            const analysis = normalizeAnalysisResult(result, cat.name);
+            const subs = mockMode
+              ? await callGeminiMockSubgroups(cat.name, ticketsCat)
+              : await callGeminiForSubgroups(sys === "Valoriza" ? "Valoriza" : activeMode, cat.name, ticketsCat, geminiKey);
 
-            // Só salva se a análise tem conteúdo real (motivo preenchido)
-            if (analysis && analysis.motivo) {
-              setAnalyses((prev) => ({ ...prev, [`${sys}::${cat.name}`]: analysis }));
+            if (subs && subs.length > 0) {
+              setAnalyses((prev) => ({
+                ...prev,
+                [`${sys}::${cat.name}`]: {
+                  detailDays,
+                  analisadoEm:   new Date().toLocaleString("pt-BR"),
+                  subcategorias: subs,
+                },
+              }));
               totalAnalysed++;
               salvou = true;
             } else {
-              console.warn(`Análise vazia para "${cat.name}" (tentativa ${tentativa}/${ANALYSIS_RETRIES})`, result);
+              console.warn(`Subtipos vazios para "${cat.name}" (tentativa ${tentativa}/${ANALYSIS_RETRIES})`);
               if (tentativa < ANALYSIS_RETRIES) await new Promise((r) => setTimeout(r, 4000));
             }
           } catch (e) {
@@ -2211,6 +2268,7 @@ function DashboardApp() {
       }
 
       setFailedCats(falharam);
+      setLastDetailDays(detailDays); // guarda para o botão "Repetir falhas"
 
       toast({
         title:       "Análise em lote concluída!",
@@ -2225,7 +2283,7 @@ function DashboardApp() {
     } finally {
       setBulkLoading(false);
     }
-  }, [data, filters.system, filters.period, filters.categories, analyses, analyzeCategories, mockMode, activeMode, toast]);
+  }, [data, filters.system, filters.categories, analyses, mockMode, activeMode, toast]);
 
   // Gera e baixa um relatório HTML formatado para impressão/PDF
   // com apenas as categorias que já foram analisadas pela IA.
@@ -2236,7 +2294,7 @@ function DashboardApp() {
       return;
     }
 
-    // Coleta apenas categorias que têm análise da IA
+    // Coleta apenas categorias que têm análise da IA (com subtipos)
     const analysedCategories = Object.entries(data[sys] || {})
       .map(([name, val]) => ({
         name,
@@ -2244,11 +2302,8 @@ function DashboardApp() {
         last30:   countInRange(val.tickets, 30),
         analysis: analyses[`${sys}::${name}`] || null,
       }))
-      .filter((c) => c.analysis !== null)
-      .sort((a, b) => {
-        const order = { Alta: 0, Média: 1, Baixa: 2 };
-        return (order[a.analysis.prioridade] ?? 3) - (order[b.analysis.prioridade] ?? 3);
-      });
+      .filter((c) => c.analysis?.subcategorias?.length > 0)
+      .sort((a, b) => b.total - a.total);
 
     if (analysedCategories.length === 0) {
       toast({ title: "Nenhuma análise disponível", description: "Solicite ao menos uma análise IA antes de exportar.", status: "warning", duration: 4000 });
@@ -2256,46 +2311,62 @@ function DashboardApp() {
     }
 
     const geradoEm = new Date().toLocaleString("pt-BR");
-    const periodo  = filters.period || "30";
 
     const priorityColor = { Alta: "#DC2626", Média: "#D97706", Baixa: "#16A34A" };
     const priorityBg    = { Alta: "#FEF2F2", Média: "#FFFBEB", Baixa: "#F0FDF4" };
 
-    const categorySections = analysedCategories.map((c, i) => `
+    // Cada categoria vira uma seção com seus subtipos listados
+    const categorySections = analysedCategories.map((c) => {
+      const subs = [...c.analysis.subcategorias].sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0));
+      const subRows = subs.map((s) => `
+        <div style="border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; margin-bottom: 10px; page-break-inside: avoid;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+            <div style="font-size: 13px; font-weight: 700; color: #111827; flex: 1;">${s.nome || '—'}</div>
+            <div style="display: flex; align-items: center; gap: 6px; margin-left: 10px;">
+              <span style="font-size: 10px; font-weight: 700; color: ${priorityColor[s.prioridade] || '#374151'}; background: ${priorityBg[s.prioridade] || '#F9FAFB'}; padding: 2px 7px; border-radius: 999px; white-space: nowrap;">● ${s.prioridade || '—'}</span>
+              <span style="font-size: 12px; font-weight: 700; color: #6366F1; white-space: nowrap;">${s.ids?.length || 0} chamados</span>
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div style="background: #FEF2F2; border-radius: 6px; padding: 9px;">
+              <div style="font-size: 9px; font-weight: 700; color: #DC2626; text-transform: uppercase; margin-bottom: 4px;">Causa Raiz</div>
+              <div style="font-size: 11px; color: #374151; line-height: 1.5;">${s.motivo || '—'}</div>
+            </div>
+            <div style="background: #F0FDFA; border-radius: 6px; padding: 9px;">
+              <div style="font-size: 9px; font-weight: 700; color: #0D9488; text-transform: uppercase; margin-bottom: 4px;">Sugestão de Automação</div>
+              <div style="font-size: 11px; color: #374151; line-height: 1.5;">${s.sugestao || '—'}</div>
+            </div>
+          </div>
+          ${s.ids?.length ? `<div style="font-size: 10px; color: #9CA3AF; margin-top: 6px;">IDs: ${s.ids.join(", ")}</div>` : ""}
+        </div>`).join("");
+
+      return `
       <div class="category" style="page-break-inside: avoid; margin-bottom: 28px; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden;">
         <div class="cat-header" style="background: #F9FAFB; padding: 14px 18px; border-bottom: 1px solid #E5E7EB; display: flex; justify-content: space-between; align-items: flex-start;">
           <div style="flex: 1;">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
               <span style="font-size: 11px; font-weight: 600; color: #6366F1; background: #EEF2FF; padding: 2px 8px; border-radius: 999px;">${sys}</span>
-              <span style="font-size: 11px; font-weight: 700; color: ${priorityColor[c.analysis.prioridade] || '#374151'}; background: ${priorityBg[c.analysis.prioridade] || '#F9FAFB'}; padding: 2px 8px; border-radius: 999px;">
-                ● ${c.analysis.prioridade || '—'}
-              </span>
+              <span style="font-size: 11px; font-weight: 600; color: #16A34A; background: #F0FDF4; padding: 2px 8px; border-radius: 999px;">${subs.length} subtipos</span>
+              <span style="font-size: 11px; color: #6B7280;">análise de ${c.analysis.detailDays || 30}d</span>
             </div>
-            <div style="font-size: 15px; font-weight: 700; color: #111827;">${c.analysis.titulo || c.name}</div>
-            <div style="font-size: 11px; color: #6B7280; margin-top: 2px;">${c.name}</div>
+            <div style="font-size: 15px; font-weight: 700; color: #111827;">${c.name}</div>
           </div>
           <div style="text-align: right; margin-left: 16px;">
             <div style="font-size: 26px; font-weight: 800; color: #6366F1; line-height: 1;">${c.total}</div>
-            <div style="font-size: 10px; color: #9CA3AF;">chamados</div>
-            <div style="font-size: 11px; color: #374151; margin-top: 4px;">${c.last30} nos últimos ${periodo}d</div>
+            <div style="font-size: 10px; color: #9CA3AF;">chamados totais</div>
           </div>
         </div>
-        <div style="padding: 16px 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-          <div style="background: #FEF2F2; border-radius: 8px; padding: 12px;">
-            <div style="font-size: 10px; font-weight: 700; color: #DC2626; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Causa Raiz</div>
-            <div style="font-size: 12px; color: #374151; line-height: 1.6;">${c.analysis.motivo}</div>
-          </div>
-          <div style="background: #F0FDFA; border-radius: 8px; padding: 12px;">
-            <div style="font-size: 10px; font-weight: 700; color: #0D9488; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Sugestão de Automação</div>
-            <div style="font-size: 12px; color: #374151; line-height: 1.6;">${c.analysis.sugestao}</div>
-          </div>
+        <div style="padding: 16px 18px;">
+          ${subRows}
         </div>
-      </div>
-    `).join("");
+      </div>`;
+    }).join("");
 
-    const totalAlta  = analysedCategories.filter((c) => c.analysis.prioridade === "Alta").length;
-    const totalMedia = analysedCategories.filter((c) => c.analysis.prioridade === "Média").length;
-    const totalBaixa = analysedCategories.filter((c) => c.analysis.prioridade === "Baixa").length;
+    // Contadores de prioridade somando todos os subtipos de todas as categorias
+    const todosSubtipos = analysedCategories.flatMap((c) => c.analysis.subcategorias);
+    const totalAlta  = todosSubtipos.filter((s) => s.prioridade === "Alta").length;
+    const totalMedia = todosSubtipos.filter((s) => s.prioridade === "Média").length;
+    const totalBaixa = todosSubtipos.filter((s) => s.prioridade === "Baixa").length;
 
     const html = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -2348,15 +2419,15 @@ function DashboardApp() {
   <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 28px;">
     <div style="background: #FEF2F2; border-radius: 10px; padding: 16px; text-align: center;">
       <div style="font-size: 28px; font-weight: 800; color: #DC2626;">${totalAlta}</div>
-      <div style="font-size: 11px; font-weight: 600; color: #DC2626; text-transform: uppercase; margin-top: 2px;">Prioridade Alta</div>
+      <div style="font-size: 11px; font-weight: 600; color: #DC2626; text-transform: uppercase; margin-top: 2px;">Subtipos — Alta</div>
     </div>
     <div style="background: #FFFBEB; border-radius: 10px; padding: 16px; text-align: center;">
       <div style="font-size: 28px; font-weight: 800; color: #D97706;">${totalMedia}</div>
-      <div style="font-size: 11px; font-weight: 600; color: #D97706; text-transform: uppercase; margin-top: 2px;">Prioridade Média</div>
+      <div style="font-size: 11px; font-weight: 600; color: #D97706; text-transform: uppercase; margin-top: 2px;">Subtipos — Média</div>
     </div>
     <div style="background: #F0FDF4; border-radius: 10px; padding: 16px; text-align: center;">
       <div style="font-size: 28px; font-weight: 800; color: #16A34A;">${totalBaixa}</div>
-      <div style="font-size: 11px; font-weight: 600; color: #16A34A; text-transform: uppercase; margin-top: 2px;">Prioridade Baixa</div>
+      <div style="font-size: 11px; font-weight: 600; color: #16A34A; text-transform: uppercase; margin-top: 2px;">Subtipos — Baixa</div>
     </div>
   </div>
 
@@ -2477,17 +2548,26 @@ function DashboardApp() {
             <Button size="sm" variant="outline" colorScheme="teal" borderRadius="lg" onClick={downloadReport}>
               ⬇ Exportar Relatório
             </Button>
-            <Button
-              size="sm" colorScheme="purple" borderRadius="lg"
-              isLoading={bulkLoading} loadingText="Analisando…"
-              onClick={() => requestBulkAnalysis()}
-            >
-              Análise IA em lote
-            </Button>
+            <Menu>
+              <MenuButton as={Button}
+                size="sm" colorScheme="purple" borderRadius="lg"
+                isLoading={bulkLoading} loadingText="Analisando…"
+              >
+                Análise IA detalhada ▾
+              </MenuButton>
+              <MenuList>
+                <MenuItem onClick={() => requestBulkAnalysis(7)}>
+                  Analisar últimos 7 dias
+                </MenuItem>
+                <MenuItem onClick={() => requestBulkAnalysis(30)}>
+                  Analisar últimos 30 dias
+                </MenuItem>
+              </MenuList>
+            </Menu>
             {failedCats.length > 0 && !bulkLoading && (
               <Button
                 size="sm" colorScheme="orange" variant="outline" borderRadius="lg"
-                onClick={() => requestBulkAnalysis(failedCats)}
+                onClick={() => requestBulkAnalysis(lastDetailDays, failedCats)}
               >
                 ↻ Repetir falhas ({failedCats.length})
               </Button>
@@ -2602,9 +2682,7 @@ function DashboardApp() {
                         fullTickets={fullVal.tickets}
                         analysis={analysis}
                         isLoading={!!loadingKeys[key]}
-                        onRequestAnalysis={() => requestAnalysis(sys, cat)}
-                        onRequestSubgroups={() => requestSubgroups(sys, cat)}
-                        isSubgroupLoading={!!subgroupLoading[key]}
+                        onRequestAnalysis={(dias) => requestAnalysis(sys, cat, dias)}
                       />
                     ))}
                   </SimpleGrid>
