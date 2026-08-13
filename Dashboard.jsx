@@ -972,16 +972,28 @@ async function callGeminiForSubgroups(mode, categoryName, tickets, geminiKey) {
   // Usa 8192 tokens — a resposta tem vários subtipos + listas de IDs e é maior
   const result = await callGemini(buildSubgroupPrompt(mode, categoryName, ticketList), geminiKey, 8192);
   console.log(`[SUBGRUPOS] "${categoryName}" — resposta bruta:`, result);
-  // A resposta pode vir como { subcategorias: [...] } ou direto como array
-  if (result?.subcategorias && Array.isArray(result.subcategorias)) return result.subcategorias;
-  if (Array.isArray(result)) return result;
-  // Tenta achar qualquer array dentro do objeto (nome de chave diferente)
-  if (result && typeof result === "object") {
+
+  // Extrai o array de subcategorias, tolerando formatos diferentes
+  let subs = null;
+  if (result?.subcategorias && Array.isArray(result.subcategorias)) subs = result.subcategorias;
+  else if (Array.isArray(result)) subs = result;
+  else if (result && typeof result === "object") {
     for (const val of Object.values(result)) {
-      if (Array.isArray(val) && val.length > 0 && val[0]?.nome) return val;
+      if (Array.isArray(val) && val.length > 0 && val[0]?.nome) { subs = val; break; }
     }
   }
-  return null;
+  if (!subs) return null;
+
+  // Valida os IDs: a IA às vezes renumera ou inventa IDs. Mantém só os que
+  // foram realmente enviados, garantindo que o filtro por subtipo funcione.
+  const idsValidos = new Set(ticketList.map((t) => String(t.id)));
+  subs = subs.map((s) => ({
+    ...s,
+    ids: (s.ids || []).map((id) => String(id).replace("#", "")).filter((id) => idsValidos.has(id)),
+  }));
+
+  // Remove subtipos que ficaram sem nenhum chamado válido após a limpeza
+  return subs.filter((s) => s.ids.length > 0);
 }
 
 // =============================================================================
@@ -1060,6 +1072,7 @@ REGRAS:
 - Crie de 2 a 8 subtipos, cada um representando um problema distinto dentro da categoria
 - Nome do subtipo: curto e técnico (ex: "Cancelamento de SCI", "Botão indisponível (sem permissão)", "Erro ao definir modalidade (Camunda)")
 - Um chamado pertence a exatamente UM subtipo; liste os IDs de cada um
+- CRÍTICO: use EXATAMENTE os valores de "id" fornecidos na lista abaixo, sem alterar, renumerar ou inventar. Copie o id exatamente como aparece.
 - Chamados que não se encaixam vão em "Outros / Diversos"
 
 CHAMADOS (id + texto):
@@ -1464,16 +1477,18 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   const descricao     = descOverride !== null ? descOverride : descricaoAuto;
 
   // Tickets filtrados pelo subgrupo selecionado (se houver).
-  // Subgrupo da IA filtra por lista de IDs; subgrupo de texto filtra por dedução.
+  // Subgrupo da IA filtra por lista de IDs contra o HISTÓRICO COMPLETO (fullTickets),
+  // pois a análise pode ter usado uma janela (7/30d) diferente do período do filtro.
   const visibleTickets = useMemo(() => {
     if (!selectedSubgroup) return categoryData.tickets;
     const sg = subgrupos.find((s) => s.label === selectedSubgroup);
+    const base = fullTickets || categoryData.tickets;
     if (sg?.fromIA) {
       const idSet = new Set(sg.ids);
-      return categoryData.tickets.filter((t) => idSet.has(t.id.replace("#", "")));
+      return base.filter((t) => idSet.has(t.id.replace("#", "")));
     }
     return categoryData.tickets.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
-  }, [categoryData.tickets, selectedSubgroup, subgrupos]);
+  }, [categoryData.tickets, fullTickets, selectedSubgroup, subgrupos]);
 
   const trend            = getMonthlyTrend(fullTickets || categoryData.tickets);
   const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
@@ -1741,7 +1756,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
             <Flex justify="space-between" align="center" mb="3">
               <Text fontWeight="600" fontSize="sm">
-                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${categoryData.tickets.length}` : ""})
+                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${(fullTickets || categoryData.tickets).length}` : ""})
               </Text>
               {totalPages > 1 && (
                 <HStack spacing="1">
