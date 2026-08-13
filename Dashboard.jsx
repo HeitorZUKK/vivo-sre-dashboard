@@ -1518,7 +1518,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               <Badge colorScheme="purple" variant="subtle" fontSize="10px">{systemName}</Badge>
               {analysis?.subcategorias?.length > 0 && (
                 <Badge colorScheme="green" variant="subtle" fontSize="9px" borderRadius="full">
-                  ✨ {analysis.subcategorias.length} subtipos
+                  {analysis.subcategorias.length} subtipos
                 </Badge>
               )}
               {analysis?.detailDays && (
@@ -1626,7 +1626,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
             <HStack mb="4" spacing="2">
               <Badge colorScheme="purple">{systemName}</Badge>
               {analysis?.subcategorias?.length > 0 && (
-                <Badge colorScheme="green" variant="subtle">✨ {analysis.subcategorias.length} subtipos</Badge>
+                <Badge colorScheme="green" variant="subtle">{analysis.subcategorias.length} subtipos</Badge>
               )}
               <Text fontSize="xs" color="gray.500">{categoryData.tickets.length} chamados totais</Text>
             </HStack>
@@ -1664,7 +1664,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
             </Box>
 
             {/* Subtipos analisados pela IA (causa raiz + sugestão de cada). Clicáveis para filtrar. */}
-            {subgrupos.length > 1 && (
+            {subgrupos.length >= 1 && (
               <Box mb="4">
                 <Flex justify="space-between" align="center" mb="2">
                   <HStack spacing="2">
