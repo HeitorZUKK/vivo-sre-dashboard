@@ -55,6 +55,7 @@ const MODE_CONFIG = {
     label:      "Fly",
     colDate:    0,  // coluna A — data
     colComment: 1,  // coluna B — comentários
+    colId:      2,  // coluna C — chamado_id
   },
   "Atlas": {
     geminiKey:  import.meta.env.VITE_GEMINI_API_KEY_ATLAS    || "",
@@ -63,6 +64,7 @@ const MODE_CONFIG = {
     label:      "Atlas",
     colDate:    0,  // ajustar quando a planilha do Atlas existir
     colComment: 1,
+    colId:      2,
     naoConfigurado: !import.meta.env.VITE_SHEET_NAME_ATLAS,  // flag: planilha ainda não definida
   },
   "Valoriza": {
@@ -72,6 +74,7 @@ const MODE_CONFIG = {
     label:      "Valoriza",
     colDate:    5,  // coluna F — "Resolvido" (número serial do Excel)
     colComment: 7,  // coluna H — "Comentários" com PROBLEMA/AÇÃO/CATEGORIA
+    colId:      0,  // coluna A — "Número" (INC...)
   },
 };
 
@@ -651,6 +654,7 @@ async function fetchSheetData(mode) {
   const sheetName = cfg.sheetName;
   const colDate   = cfg.colDate   ?? 0;
   const colComment = cfg.colComment ?? 1;
+  const colId      = cfg.colId; // coluna do chamado_id (pode ser undefined)
 
   // Limpa o registro de categorias canônicas para este carregamento
   resetCanonicas();
@@ -680,10 +684,15 @@ async function fetchSheetData(mode) {
     const date = parseDate(rawDate);
     if (!date) return;
 
+    // ID real do chamado, lido da coluna configurada (chamado_id).
+    // Se a coluna não existir ou estiver vazia, cai no número da linha como fallback.
+    const idReal = colId != null ? String(row[colId] || "").trim() : "";
+    const ticketId = idReal || `#${idx + 1}`;
+
     // Classifica usando as regras do modo ativo
     const { sistema, categoria } = classificarComentario(comentario, mode);
     const detalhe = extrairDetalhe(comentario, categoria);
-    const ticket  = { id: `#${idx + 1}`, date, system: sistema, category: categoria, detalhe, description: comentario };
+    const ticket  = { id: ticketId, date, system: sistema, category: categoria, detalhe, description: comentario };
 
     if (!data[sistema])            data[sistema] = {};
     if (!data[sistema][categoria]) data[sistema][categoria] = { tickets: [] };
@@ -1771,13 +1780,13 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
             <Table size="xs">
               <Thead>
-                <Tr><Th w="60px">Linha</Th><Th w="90px">Data</Th><Th w="90px">Detalhe</Th><Th>Descrição</Th></Tr>
+                <Tr><Th w="110px">ID Chamado</Th><Th w="90px">Data</Th><Th w="90px">Detalhe</Th><Th>Descrição</Th></Tr>
               </Thead>
               <Tbody>
                 {paginatedTickets.map((t) => (
                   <Tr key={t.id} _hover={{ bg: statBg }} cursor="pointer"
                     onClick={() => setExpandedTicket(expandedTicket === t.id ? null : t.id)}>
-                    <Td><Text fontSize="11px" fontFamily="mono" color="purple.500">{t.id}</Text></Td>
+                    <Td><Text fontSize="11px" fontFamily="mono" color="purple.500" whiteSpace="nowrap">{t.id}</Text></Td>
                     <Td fontSize="11px" whiteSpace="nowrap">{t.date.toLocaleDateString("pt-BR")}</Td>
                     <Td>
                       {t.detalhe && (
