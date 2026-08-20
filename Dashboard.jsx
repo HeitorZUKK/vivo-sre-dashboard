@@ -1778,24 +1778,29 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               )}
             </Flex>
 
-            <Table size="xs">
+            <Table size="xs" sx={{ tableLayout: "fixed" }}>
               <Thead>
-                <Tr><Th w="110px">ID Chamado</Th><Th w="90px">Data</Th><Th w="90px">Detalhe</Th><Th>Descrição</Th></Tr>
+                <Tr>
+                  <Th w="90px"  whiteSpace="nowrap" px="2">ID</Th>
+                  <Th w="85px"  whiteSpace="nowrap" px="2">Data</Th>
+                  <Th w="100px" whiteSpace="nowrap" px="2">Detalhe</Th>
+                  <Th whiteSpace="nowrap" px="2">Descrição</Th>
+                </Tr>
               </Thead>
               <Tbody>
                 {paginatedTickets.map((t) => (
                   <Tr key={t.id} _hover={{ bg: statBg }} cursor="pointer"
                     onClick={() => setExpandedTicket(expandedTicket === t.id ? null : t.id)}>
-                    <Td><Text fontSize="11px" fontFamily="mono" color="purple.500" whiteSpace="nowrap">{t.id}</Text></Td>
-                    <Td fontSize="11px" whiteSpace="nowrap">{t.date.toLocaleDateString("pt-BR")}</Td>
-                    <Td>
+                    <Td px="2"><Text fontSize="11px" fontFamily="mono" color="purple.500" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">{t.id}</Text></Td>
+                    <Td px="2" fontSize="11px" whiteSpace="nowrap">{t.date.toLocaleDateString("pt-BR")}</Td>
+                    <Td px="2">
                       {t.detalhe && (
-                        <Badge colorScheme="purple" variant="subtle" fontSize="9px" borderRadius="full">
+                        <Badge colorScheme="purple" variant="subtle" fontSize="9px" borderRadius="full" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis" maxW="100%">
                           {t.detalhe}
                         </Badge>
                       )}
                     </Td>
-                    <Td fontSize="11px">
+                    <Td px="2" fontSize="11px">
                       {expandedTicket === t.id ? (
                         <Box>
                           <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.description}</Text>
