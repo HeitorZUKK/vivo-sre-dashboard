@@ -743,54 +743,74 @@ function parseDate(raw) {
 // Análise SRE: envia categorias e retorna causa raiz, sugestão e prioridade.
 // =============================================================================
 
-// gemini-flash-latest é um alias que sempre aponta para a versão Flash mais
-// recente disponível — evita quebrar quando o Google descontinua modelos antigos.
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+// Endpoint da Serverless Function que faz a chamada à IA com segurança.
+// A chave da API vive no servidor (Vercel), nunca no navegador.
+const ANALYZE_ENDPOINT = "/api/analyze";
+
+// Guarda o último uso de tokens reportado pelo servidor (para exibir no dashboard)
+let ultimoUsoTokens = null;
+export function getUltimoUsoTokens() { return ultimoUsoTokens; }
 
 // ── Helper de retry ───────────────────────────────────────────────────────────
 
 /**
- * Faz uma chamada ao Gemini usando a chave específica do modo ativo.
+ * Envia o prompt à Serverless Function, que chama a Claude e conta os tokens.
+ * O segundo parâmetro (geminiKey) foi mantido na assinatura por compatibilidade
+ * com as chamadas existentes, mas NÃO é mais usado — a chave fica no servidor.
  * @param {string} promptText
- * @param {string} geminiKey  - chave da API do modo (Fly/Atlas ou Valoriza)
+ * @param {string} _unusedKey  - ignorado (compatibilidade)
+ * @param {number} maxTokens
  */
-async function callGemini(promptText, geminiKey, maxTokens = 4096) {
-  if (!geminiKey) {
-    throw new Error(
-      "Chave Gemini não configurada para este modo. " +
-      "Verifique VITE_GEMINI_API_KEY_FLY ou VITE_GEMINI_API_KEY_VALORIZA no .env."
-    );
-  }
-
-  const body = JSON.stringify({
-    contents: [{ parts: [{ text: promptText }] }],
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.4 },
-  });
-
+async function callGemini(promptText, _unusedKey, maxTokens = 4096) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const response = await fetch(GEMINI_URL, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
-      body,
-    });
+    // Timeout de 60s por tentativa — evita requisição pendurada indefinidamente
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), 60_000);
+
+    let response;
+    try {
+      response = await fetch(ANALYZE_ENDPOINT, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ prompt: promptText, maxTokens }),
+        signal:  controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError" && attempt < MAX_RETRIES) {
+        console.warn(`IA timeout — tentativa ${attempt}/${MAX_RETRIES}`);
+        continue;
+      }
+      throw new Error(err.name === "AbortError"
+        ? "A IA demorou demais para responder (timeout). Tente uma janela menor (7 dias) ou menos categorias."
+        : `Erro de rede ao chamar a IA: ${err.message}`);
+    }
+    clearTimeout(timeoutId);
 
     const data = await response.json();
 
     if (response.ok) {
-      const text  = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      return parseGeminiJSON(text);
+      ultimoUsoTokens = data.uso || null; // guarda o consumo reportado pelo servidor
+      return parseGeminiJSON(data.text || "");
     }
 
-    const status      = response.status;
-    const isRetryable = status === 503 || status === 429;
-    if (isRetryable && attempt < MAX_RETRIES) {
+    // Limite diário atingido — bloqueia sem retry (não adianta insistir)
+    if (data?.bloqueado || response.status === 429) {
+      throw new Error(
+        `Limite diário de tokens atingido (${data?.usados || "?"}/${data?.limite || "?"}). ` +
+        "As análises voltam amanhã ou aumente o limite no servidor."
+      );
+    }
+
+    // Erros transitórios do servidor — tenta de novo
+    if ((response.status === 503 || response.status === 500) && attempt < MAX_RETRIES) {
       const waitMs = attempt * RETRY_DELAY_MS;
-      console.warn(`Gemini ${status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitMs / 1000}s…`);
+      console.warn(`IA erro ${response.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitMs / 1000}s…`);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }
 
-    throw new Error(`Gemini API error ${status}: ${JSON.stringify(data?.error || data)}`);
+    throw new Error(`Erro na análise (${response.status}): ${data?.error || "desconhecido"}`);
   }
 }
 
@@ -1047,14 +1067,28 @@ function sampleTickets(tickets, max = 5) {
 
 /**
  * Monta a lista de chamados (com ID e texto) para a IA subcategorizar.
- * Limita o texto de cada chamado para controlar tokens, mas envia TODOS
- * (até um teto), pois a subcategorização precisa ver o conjunto completo.
+ * Quando há muitos chamados, faz uma amostragem distribuída em vez de mandar
+ * todos — respostas muito grandes truncavam ou faziam a requisição travar.
+ * Prioriza sempre incluir o começo (mais recentes) e distribui o resto.
  */
-function ticketsForSubgrouping(tickets, maxTickets = 35, maxCharsEach = 180) {
-  return tickets.slice(0, maxTickets).map((t) => ({
-    id:    t.id.replace("#", ""),
-    texto: t.description.trim().substring(0, maxCharsEach),
-  }));
+function ticketsForSubgrouping(tickets, maxTickets = 25, maxCharsEach = 160) {
+  if (tickets.length <= maxTickets) {
+    return tickets.map((t) => ({
+      id:    t.id.replace("#", ""),
+      texto: t.description.trim().substring(0, maxCharsEach),
+    }));
+  }
+  // Amostragem distribuída: pega maxTickets espalhados ao longo do conjunto
+  const step = tickets.length / maxTickets;
+  const sampled = [];
+  for (let i = 0; i < maxTickets; i++) {
+    const t = tickets[Math.floor(i * step)];
+    sampled.push({
+      id:    t.id.replace("#", ""),
+      texto: t.description.trim().substring(0, maxCharsEach),
+    });
+  }
+  return sampled;
 }
 
 /**
@@ -2239,8 +2273,9 @@ function DashboardApp() {
       });
 
       // Analisa UMA categoria por requisição, gerando os subtipos com causa raiz.
-      // Se a resposta vier vazia/truncada, tenta novamente até ANALYSIS_RETRIES vezes.
-      const ANALYSIS_RETRIES = 3;
+      // ANALYSIS_RETRIES=2 porque o callGemini já tenta 3x internamente em erros
+      // transitórios (503/429). Mais que isso multiplicaria o gasto de tokens.
+      const ANALYSIS_RETRIES = 2;
       let totalAnalysed = 0;
       const falharam    = [];
       const geminiKey   = MODE_CONFIG[activeMode]?.geminiKey || "";
