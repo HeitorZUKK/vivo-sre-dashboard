@@ -1031,7 +1031,14 @@ async function callGeminiForSubgroups(mode, categoryName, tickets, geminiKey) {
 // =============================================================================
 
 function countInRange(tickets, days) {
-  const cutoff = new Date();
+  if (!tickets || tickets.length === 0) return 0;
+  // Ancora no chamado mais recente (não em "hoje"), igual ao getTicketsInPeriod,
+  // para as contagens ficarem estáveis entre atualizações da planilha.
+  let maisRecente = tickets[0].date;
+  for (const t of tickets) {
+    if (t.date > maisRecente) maisRecente = t.date;
+  }
+  const cutoff = new Date(maisRecente);
   cutoff.setDate(cutoff.getDate() - days);
   return tickets.filter((t) => t.date >= cutoff).length;
 }
@@ -1040,8 +1047,22 @@ function countInRange(tickets, days) {
  * Retorna apenas os tickets dentro do período (dias).
  * Usado para limitar o que é enviado à IA — evita gastar tokens com histórico antigo.
  */
+// Filtra os chamados dentro de uma janela de N dias.
+// A janela é ancorada no CHAMADO MAIS RECENTE da lista (não em "hoje"), para que
+// os chamados não "sumam" com o passar dos dias entre uma atualização e outra da
+// planilha. Assim, "últimos 7 dias" = os 7 dias anteriores ao chamado mais novo,
+// e fica estável a semana toda até a planilha ser atualizada de novo.
 function getTicketsInPeriod(tickets, days) {
-  const cutoff = new Date();
+  if (!tickets || tickets.length === 0) return [];
+  if (days >= 9999) return tickets; // "todo histórico"
+
+  // Acha a data do chamado mais recente
+  let maisRecente = tickets[0].date;
+  for (const t of tickets) {
+    if (t.date > maisRecente) maisRecente = t.date;
+  }
+
+  const cutoff = new Date(maisRecente);
   cutoff.setDate(cutoff.getDate() - days);
   return tickets.filter((t) => t.date >= cutoff);
 }
@@ -2046,7 +2067,19 @@ function DashboardApp() {
     // "Todo o histórico" (9999) — não filtra nada
     if (periodDays >= 9999) return data;
 
-    const cutoff = new Date();
+    // Ancora a janela no chamado mais recente de TODOS os dados (não em "hoje"),
+    // para os chamados não sumirem com o passar dos dias entre atualizações.
+    let maisRecente = null;
+    Object.values(data).forEach((cats) =>
+      Object.values(cats).forEach((val) =>
+        val.tickets.forEach((t) => {
+          if (!maisRecente || t.date > maisRecente) maisRecente = t.date;
+        })
+      )
+    );
+    if (!maisRecente) return {};
+
+    const cutoff = new Date(maisRecente);
     cutoff.setDate(cutoff.getDate() - periodDays);
 
     const filtered = {};
