@@ -14,8 +14,46 @@
 // Variáveis de ambiente necessárias no Vercel:
 //   ANTHROPIC_API_KEY       — a chave nova da Anthropic (nunca a que vazou)
 //   DAILY_TOKEN_LIMIT       — teto de tokens por dia (ex: 500000). Opcional; padrão 500000.
-//   ANTHROPIC_MODEL         — modelo a usar. Opcional; padrão claude-opus-4-6... (ver abaixo)
+//   ANTHROPIC_MODEL         — modelo a usar. Opcional; padrão claude-sonnet-4-5 (ver abaixo)
 // =============================================================================
+
+import { readFileSync } from "fs";
+import { join } from "path";
+
+// Lê o arquivo de conhecimento do Fly (fly-knowledge.md) uma vez e guarda em cache.
+// Editar esse .md muda como a IA classifica, sem tocar no código do dashboard.
+let _flyKnowledgeCache = null;
+function getFlyKnowledge() {
+  if (_flyKnowledgeCache !== null) return _flyKnowledgeCache;
+
+  // Tenta vários caminhos possíveis — o Vercel pode posicionar o arquivo de
+  // formas diferentes dependendo da configuração do build.
+  const candidatos = [
+    join(process.cwd(), "api", "fly-knowledge.md"),
+    join(process.cwd(), "fly-knowledge.md"),
+    new URL("./fly-knowledge.md", import.meta.url).pathname,
+  ];
+
+  for (const caminho of candidatos) {
+    try {
+      const texto = readFileSync(caminho, "utf8")
+        .split("\n")
+        .filter((linha) => !linha.trimStart().startsWith("#")) // tira comentários
+        .join("\n")
+        .trim();
+      if (texto) {
+        _flyKnowledgeCache = texto;
+        return _flyKnowledgeCache;
+      }
+    } catch {
+      // tenta o próximo caminho
+    }
+  }
+
+  console.warn("fly-knowledge.md não encontrado — seguindo sem conhecimento extra.");
+  _flyKnowledgeCache = "";
+  return _flyKnowledgeCache;
+}
 
 // Contador de tokens em memória. Reinicia quando a função "esfria" (cold start),
 // então NÃO é um limite perfeito entre múltiplas instâncias — mas para um time
@@ -26,7 +64,9 @@ let tokenState = {
   usados: 0,     // tokens acumulados no dia (input + output)
 };
 
-const DEFAULT_DAILY_LIMIT = 500_000;// Modelo padrão. Pode ser trocado pela variável ANTHROPIC_MODEL no Vercel.
+const DEFAULT_DAILY_LIMIT = 500_000;
+
+// Modelo padrão. Pode ser trocado pela variável ANTHROPIC_MODEL no Vercel.
 // Opções comuns (verifique quais sua chave corporativa tem acesso):
 //   claude-sonnet-4-5-20250929  — equilíbrio custo/qualidade (padrão, recomendado)
 //   claude-haiku-4-5-20251001   — mais barato e rápido, para economizar tokens
@@ -77,10 +117,23 @@ export default async function handler(req, res) {
   if (typeof body === "string") {
     try { body = JSON.parse(body); } catch { body = {}; }
   }
-  const { prompt, maxTokens } = body || {};
+  // Campos do corpo:
+  //   prompt      — o prompt da análise
+  //   maxTokens   — limite de saída (opcional)
+  //   injectFly   — se true, injeta o conhecimento do fly-knowledge.md no início
+  const { prompt, maxTokens, injectFly } = body || {};
 
   if (!prompt || typeof prompt !== "string") {
     return res.status(400).json({ error: "Campo 'prompt' é obrigatório." });
+  }
+
+  // Monta o prompt final. Se for análise do Fly, injeta o conhecimento do .md.
+  let promptFinal = prompt;
+  if (injectFly) {
+    const conhecimento = getFlyKnowledge();
+    if (conhecimento) {
+      promptFinal = `${conhecimento}\n\n---\n\n${prompt}`;
+    }
   }
 
   try {
@@ -94,7 +147,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model,
         max_tokens: maxTokens || 4096,
-        messages: [{ role: "user", content: prompt }],
+        messages: [{ role: "user", content: promptFinal }],
       }),
     });
 

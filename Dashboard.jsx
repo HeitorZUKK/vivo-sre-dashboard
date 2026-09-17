@@ -761,7 +761,7 @@ export function getUltimoUsoTokens() { return ultimoUsoTokens; }
  * @param {string} _unusedKey  - ignorado (compatibilidade)
  * @param {number} maxTokens
  */
-async function callGemini(promptText, _unusedKey, maxTokens = 4096) {
+async function callGemini(promptText, _unusedKey, maxTokens = 4096, injectFly = false) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     // Timeout de 60s por tentativa — evita requisição pendurada indefinidamente
     const controller = new AbortController();
@@ -772,7 +772,7 @@ async function callGemini(promptText, _unusedKey, maxTokens = 4096) {
       response = await fetch(ANALYZE_ENDPOINT, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ prompt: promptText, maxTokens }),
+        body:    JSON.stringify({ prompt: promptText, maxTokens, injectFly }),
         signal:  controller.signal,
       });
     } catch (err) {
@@ -998,8 +998,10 @@ async function callGeminiForAnalysis(mode, system, categories, geminiKey) {
 async function callGeminiForSubgroups(mode, categoryName, tickets, geminiKey) {
   const ticketList = ticketsForSubgrouping(tickets);
   if (ticketList.length === 0) return null;
+  // Injeta o conhecimento do Fly (do servidor) quando não é Valoriza
+  const injectFly = mode !== "Valoriza";
   // Usa 8192 tokens — a resposta tem vários subtipos + listas de IDs e é maior
-  const result = await callGemini(buildSubgroupPrompt(mode, categoryName, ticketList), geminiKey, 8192);
+  const result = await callGemini(buildSubgroupPrompt(mode, categoryName, ticketList), geminiKey, 8192, injectFly);
   console.log(`[SUBGRUPOS] "${categoryName}" — resposta bruta:`, result);
 
   // Extrai o array de subcategorias, tolerando formatos diferentes
@@ -1117,6 +1119,10 @@ function ticketsForSubgrouping(tickets, maxTickets = 25, maxCharsEach = 160) {
  * A IA agrupa os chamados de uma categoria em subtipos e, para CADA subtipo,
  * fornece causa raiz e sugestão de automação — no estilo da planilha de referência.
  */
+// NOTA: o conhecimento do Fly (subcategorias canônicas + princípios) agora vive no
+// servidor, no arquivo api/fly-knowledge.md, e é injetado pela Serverless Function
+// quando injectFly=true. Editar aquele .md muda a classificação sem tocar aqui.
+
 function buildSubgroupPrompt(mode, categoryName, ticketList) {
   const contexto = mode === "Valoriza"
     ? `Você é um especialista em operações do programa Vivo Valoriza (benefícios do App Vivo).
@@ -1124,7 +1130,8 @@ As sugestões devem focar em: melhoria de comunicação, FAQ, ajuste no fluxo do
     : `Você é um Engenheiro de Confiabilidade de Sistemas (SRE) do ecossistema Vivo Fly.
 O Fly gerencia sites da Vivo: SOI (gestão de candidatos), SCI/FCU (fase contratual), Camunda BPM (workflow/stages), banco (tabelas sharing_outdoor_collo/bts, candidato, empresa).
 Padrões conhecidos: erro de altitude (campo com letras), município/distrito ausente no Science, [object Object] (caractere especial <br>), mapa não carrega (coordenadas positivas/com vírgula), Feign NULL (campo fcu preenchido ao disparar SCI), unique query result (empresa duplicada no VivoGo), subprocesso em andamento (múltiplas modalidades na SOI), botão não aparece (grupo Camunda ≠ grupo do usuário).
-As sugestões devem ser técnicas e acionáveis (automação, validação, regra de negócio).`;
+As sugestões devem ser técnicas e acionáveis (automação, validação, regra de negócio).
+As subcategorias canônicas e princípios de classificação foram fornecidos acima.`;
 
   return `${contexto}
 
@@ -1134,10 +1141,11 @@ Abaixo estão os chamados reais da categoria "${categoryName}". Sua tarefa é:
 
 REGRAS:
 - Crie de 2 a 8 subtipos, cada um representando um problema distinto dentro da categoria
-- Nome do subtipo: curto e técnico (ex: "Cancelamento de SCI", "Botão indisponível (sem permissão)", "Erro ao definir modalidade (Camunda)")
+- Prefira os nomes das SUBCATEGORIAS CANÔNICAS acima quando o caso encaixar; crie um nome novo só se nenhum servir
+- Siga os PRINCÍPIOS DE CLASSIFICAÇÃO: separe por causa (não por ação), um caso por subtipo, evite "Outros"
 - Um chamado pertence a exatamente UM subtipo; liste os IDs de cada um
 - CRÍTICO: use EXATAMENTE os valores de "id" fornecidos na lista abaixo, sem alterar, renumerar ou inventar. Copie o id exatamente como aparece.
-- Chamados que não se encaixam vão em "Outros / Diversos"
+- Chamados que realmente não se encaixam vão em "Outros / Diversos"
 
 CHAMADOS (id + texto):
 ${JSON.stringify(ticketList, null, 2)}
