@@ -745,7 +745,9 @@ function parseDate(raw) {
 
 // Endpoint da Serverless Function que faz a chamada à IA com segurança.
 // A chave da API vive no servidor (Vercel), nunca no navegador.
-const ANALYZE_ENDPOINT = "/api/analyze";
+const ANALYZE_ENDPOINT      = "/api/analyze";
+const SAVE_ANALYSIS_ENDPOINT = "/api/save-analysis"; // publica a análise compartilhada
+const GET_ANALYSIS_ENDPOINT  = "/api/get-analysis";  // lê a análise compartilhada
 
 // Guarda o último uso de tokens reportado pelo servidor (para exibir no dashboard)
 let ultimoUsoTokens = null;
@@ -2030,6 +2032,36 @@ function clearStoredAnalyses(mode) {
   } catch (_) { /* silencioso */ }
 }
 
+// ── Análise COMPARTILHADA (banco Upstash via Serverless Function) ──────────────
+// Diferente do localStorage (que é por navegador), a análise compartilhada fica
+// num banco e é a mesma para todos os usuários.
+
+// Lê a análise compartilhada do modo. Retorna { analyses, atualizadoEm } ou null.
+async function fetchSharedAnalyses(mode) {
+  try {
+    const res = await fetch(`${GET_ANALYSIS_ENDPOINT}?modo=${encodeURIComponent(mode)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return { analyses: data.analyses || {}, atualizadoEm: data.atualizadoEm || null };
+  } catch (_) {
+    return null; // sem banco configurado ou erro de rede — segue com o local
+  }
+}
+
+// Publica as análises atuais no banco compartilhado (todos passam a ver estas).
+async function publishSharedAnalyses(mode, analyses) {
+  const res = await fetch(SAVE_ANALYSIS_ENDPOINT, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ modo: mode, analyses }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `Erro ao publicar (${res.status})`);
+  }
+  return res.json();
+}
+
 function DashboardApp() {
   // ── Estado ──────────────────────────────────────────────────────────────────
   const [activeMode,      setActiveMode]      = useState(DEFAULT_MODE); // "Fly", "Atlas" ou "Valoriza"
@@ -2044,6 +2076,8 @@ function DashboardApp() {
   const [mockMode,        setMockMode]        = useState(false); // quando true, substitui Gemini por dados simulados
   const [failedCats,      setFailedCats]      = useState([]);    // categorias que falharam na última análise em lote
   const [filters,         setFilters]         = useState(INITIAL_FILTERS);
+  const [publishing,      setPublishing]      = useState(false); // publicando análise compartilhada
+  const [sharedUpdatedAt, setSharedUpdatedAt] = useState(null);  // quando a análise compartilhada foi atualizada
 
   const toast  = useToast();
   const bg     = useColorModeValue("gray.50", "gray.900");
@@ -2571,6 +2605,23 @@ function DashboardApp() {
     saveStoredAnalyses(activeMode, analyses);
   }, [analyses, activeMode]);
 
+  // Ao montar e ao trocar de modo: busca a análise COMPARTILHADA do banco.
+  // Se existir, ela tem prioridade e todos veem a mesma. Se não houver banco
+  // configurado ou nada publicado, mantém o que veio do localStorage.
+  useEffect(() => {
+    let ativo = true;
+    fetchSharedAnalyses(activeMode).then((shared) => {
+      if (!ativo || !shared) return;
+      if (shared.analyses && Object.keys(shared.analyses).length > 0) {
+        setAnalyses(shared.analyses);
+        setSharedUpdatedAt(shared.atualizadoEm);
+      } else {
+        setSharedUpdatedAt(null);
+      }
+    });
+    return () => { ativo = false; };
+  }, [activeMode]);
+
   // Ao trocar de modo: limpa dados/filtros e carrega as análises SALVAS do novo modo
   const handleModeChange = useCallback((newMode) => {
     setActiveMode(newMode);
@@ -2587,6 +2638,29 @@ function DashboardApp() {
     clearStoredAnalyses(activeMode);
     toast({ title: "Análises limpas", description: `As análises de ${MODE_CONFIG[activeMode]?.label} foram removidas.`, status: "info", duration: 3000 });
   }, [activeMode, toast]);
+
+  // Publica as análises atuais no banco compartilhado — todos passam a ver estas.
+  const handlePublishAnalyses = useCallback(async () => {
+    if (Object.keys(analyses).length === 0) {
+      toast({ title: "Nada para publicar", description: "Gere ao menos uma análise antes de publicar.", status: "warning", duration: 3000 });
+      return;
+    }
+    setPublishing(true);
+    try {
+      const r = await publishSharedAnalyses(activeMode, analyses);
+      setSharedUpdatedAt(r.atualizadoEm);
+      toast({
+        title:       "Análise publicada!",
+        description: `${r.qtd} categorias agora visíveis para todos os usuários de ${MODE_CONFIG[activeMode]?.label}.`,
+        status:      "success",
+        duration:    5000,
+      });
+    } catch (e) {
+      toast({ title: "Erro ao publicar", description: String(e.message), status: "error", duration: 6000 });
+    } finally {
+      setPublishing(false);
+    }
+  }, [analyses, activeMode, toast]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -2620,6 +2694,11 @@ function DashboardApp() {
                   </>
                 ) : (
                   <Text fontSize="11px" color="gray.500">Planilha não carregada</Text>
+                )}
+                {sharedUpdatedAt && (
+                  <Text fontSize="11px" color="green.600" ml="2">
+                    · 📢 análise da semana: {new Date(sharedUpdatedAt).toLocaleDateString("pt-BR")}
+                  </Text>
                 )}
               </Flex>
             </Box>
@@ -2675,6 +2754,15 @@ function DashboardApp() {
                 onClick={() => requestBulkAnalysis(lastDetailDays, failedCats)}
               >
                 ↻ Repetir falhas ({failedCats.length})
+              </Button>
+            )}
+            {Object.keys(analyses).length > 0 && (
+              <Button
+                size="sm" colorScheme="green" borderRadius="lg"
+                isLoading={publishing} loadingText="Publicando…"
+                onClick={handlePublishAnalyses}
+              >
+                📢 Publicar p/ todos
               </Button>
             )}
             {Object.keys(analyses).length > 0 && (
