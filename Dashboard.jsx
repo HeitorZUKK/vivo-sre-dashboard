@@ -310,6 +310,20 @@ function normText(str) {
     .trim();
 }
 
+// Normaliza o NOME de uma categoria para casar a análise publicada pelo script
+// com o card do dashboard, mesmo quando a grafia difere (maiúsculas, acentos,
+// pontuação, ou descrição após ":"). Ex: "SUPORTE OPERACIONAL TÉCNICO GERAL"
+// e "Suporte Operacional Técnico Geral" viram a mesma chave.
+function normCatKey(nome) {
+  return (nome || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // tira acentos
+    .toUpperCase()
+    .replace(/[.:;–—-].*$/, "")   // corta descrição após . : ; – — -
+    .replace(/[^A-Z0-9\s/]/g, " ") // remove pontuação (mantém / de "SOI/CAMUNDA")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Mapa de aliases por modo.
  * Chave: texto normalizado (via normText) de qualquer variação conhecida.
@@ -2143,6 +2157,19 @@ function DashboardApp() {
     return [...cats].sort();
   }, [periodData]);
 
+  // Índice das análises por chave NORMALIZADA — permite casar a análise publicada
+  // pelo script (nomes em maiúsculas, com descrição) com o card do dashboard,
+  // mesmo quando a grafia da categoria difere.
+  const analysesNorm = useMemo(() => {
+    const idx = {};
+    Object.entries(analyses).forEach(([key, val]) => {
+      const [sys, ...rest] = key.split("::");
+      const cat = rest.join("::");
+      idx[`${sys}::${normCatKey(cat)}`] = val;
+    });
+    return idx;
+  }, [analyses]);
+
   const filteredCards = useMemo(() => {
     const cards = [];
     filteredSystems.forEach((sys) => {
@@ -2150,7 +2177,8 @@ function DashboardApp() {
       Object.entries(periodData[sys]).forEach(([cat, val]) => {
         if (filters.categories.length > 0 && !filters.categories.includes(cat)) return;
         const key      = `${sys}::${cat}`;
-        const analysis = analyses[key];
+        // Busca a análise: primeiro exata, depois por nome normalizado (casa com o script)
+        const analysis = analyses[key] || analysesNorm[`${sys}::${normCatKey(cat)}`];
         if (filters.priority && analysis?.prioridade !== filters.priority) return;
         // fullVal = histórico completo da categoria (do `data`, não do periodData filtrado).
         // Usado para as janelas 30/60/90 do card, que devem sempre refletir o histórico.
@@ -2160,7 +2188,7 @@ function DashboardApp() {
     });
     // Ordena do maior para o menor volume de chamados
     return cards.sort((a, b) => b.val.tickets.length - a.val.tickets.length);
-  }, [periodData, data, filteredSystems, filters, analyses]);
+  }, [periodData, data, filteredSystems, filters, analyses, analysesNorm]);
 
   const totalTickets = useMemo(() => {
     let t = 0;
