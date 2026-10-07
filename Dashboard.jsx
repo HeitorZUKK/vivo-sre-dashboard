@@ -12,9 +12,13 @@ import {
   Alert, AlertIcon, AlertDescription, SimpleGrid, Card,
   CardHeader, CardBody, CardFooter,
   FormControl, FormLabel,
-  Menu, MenuButton, MenuList, MenuItem,
+  Menu, MenuButton, MenuList, MenuItem, MenuDivider,
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
+import {
+  classificarLinhas, getCategoryDescription, normCatKey,
+} from "./classificacao.js";
+import Painel from "./Painel.jsx";
 
 // =============================================================================
 // SEÇÃO 1 — CONFIGURAÇÃO
@@ -147,8 +151,8 @@ async function callGeminiMock(categories) {
   categories.forEach((cat) => {
     result[cat.name] = MOCK_ANALYSES[cat.name] || {
       titulo:     `Análise Mock — ${cat.name.substring(0, 30)}`,
-      motivo:     `[MOCK] Esta categoria teve ${cat.total} chamados no período selecionado. Em modo mock, nenhuma chamada real foi feita ao Gemini. A causa raiz real seria analisada pela IA com base nas amostras de texto dos chamados.`,
-      sugestao:   `[MOCK] Sugestão simulada para "${cat.name.substring(0, 40)}…". Ative o modo real desligando o Mock no header para obter sugestões reais do Gemini.`,
+      motivo:     `[MOCK] Esta categoria teve ${cat.total} chamados no período selecionado. No modo de teste, nenhuma chamada real é feita à IA. A causa raiz real seria analisada pela IA com base nas amostras de texto dos chamados.`,
+      sugestao:   `[MOCK] Sugestão simulada para "${cat.name.substring(0, 40)}…". Desligue o modo de teste para obter sugestões reais.`,
       prioridade: cat.total > 10 ? "Alta" : cat.total > 3 ? "Média" : "Baixa",
     };
   });
@@ -170,341 +174,19 @@ async function callGeminiMockSubgroups(categoryName, tickets) {
     if (fatia.length === 0) return;
     subs.push({
       nome:       nomes[i],
-      motivo:     `[MOCK] Causa raiz simulada para ${fatia.length} chamados de "${categoryName.substring(0, 30)}". Desative o Mock para análise real.`,
-      sugestao:   `[MOCK] Sugestão de automação simulada. No modo real, o Gemini analisaria o texto dos chamados.`,
+      motivo:     `[MOCK] Causa raiz simulada para ${fatia.length} chamados de "${categoryName.substring(0, 30)}". Desligue o modo de teste para análise real.`,
+      sugestao:   `[MOCK] Sugestão de automação simulada. No modo real, a IA analisa o texto dos chamados.`,
       prioridade: fatia.length > 8 ? "Alta" : fatia.length > 3 ? "Média" : "Baixa",
       ids:        fatia,
     });
   });
   return subs;
 }
-//
-// Cada modo tem suas próprias regras de keyword e sistema padrão.
-// Novos modos podem ser adicionados criando uma entrada em CLASSIFIER_CONFIG.
-//
-// COMO ADICIONAR UMA NOVA REGRA:
-//   1. Localize o array "rules" do modo correto abaixo.
-//   2. Adicione um objeto { keywords, sistema, categoria }.
-//   3. A ordem importa — a primeira regra que bater vence.
-//   4. Se uma categoria nova surgir com o tempo, basta adicionar aqui.
 // =============================================================================
-
-const CLASSIFIER_CONFIG = {
-  // ── Fly — erros técnicos de infraestrutura ──────────────────────────────────
-  "Fly": {
-    detectSistema: () => "Fly",
-    defaultCategoria: "Suporte Operacional Técnico Geral",
-    rules: [
-      { keywords: ["altitude", "decimal digit"],              sistema: null,    categoria: "Erro de Tipo: Alfabetivo em Campo Altitude (SOI)"           },
-      { keywords: ["altura estrutura", "virgula", "vírgula"], sistema: null,    categoria: "Erro de Sintaxe: Vírgula em Altura Estrutura (SOI)"          },
-      { keywords: ["distrito", "municipio", "município"],     sistema: null,    categoria: "Divergência Cadastral: Distrito/Município ausente no Science" },
-      { keywords: ["object object", "<br>", "quebra de linha"],sistema: null,   categoria: "Falha de Renderização: Caractere Especial no Endereço"        },
-      { keywords: ["mapa", "coordenadas", "latitude", "longitude"], sistema: null, categoria: "Erro de Indentação: Coordenada Positiva no Mapa"           },
-      { keywords: ["feign", "feignexception", "abrir sci"],   sistema: null,    categoria: "Bloqueio de Integração: FCU Duplicada ao Disparar SCI"        },
-      { keywords: ["unique query", "empresa duplicada"],      sistema: null,    categoria: "Duplicidade de Registro: Empresa Duplicada no VivoGo"         },
-      { keywords: ["subprocesso", "camunda", "modalidade em aberto"], sistema: null, categoria: "Violação de Regra BPM: Multiplas Modalidades na SOI"     },
-      { keywords: ["botão", "permissão", "keycloak"],         sistema: null,    categoria: "Falha de Atribuição: Grupo Designado no Camunda Workflow"     },
-    ],
-  },
-
-  // ── Atlas — ainda sem regras próprias. Reutiliza a base do Fly por enquanto. ─
-  // Quando o Atlas tiver planilha e padrões próprios, adicione as regras aqui.
-  "Atlas": {
-    detectSistema: () => "Atlas",
-    defaultCategoria: "Suporte Operacional Técnico Geral",
-    rules: [
-      { keywords: ["altitude", "decimal digit"],              sistema: null,    categoria: "Erro de Tipo: Alfabetivo em Campo Altitude (SOI)"           },
-      { keywords: ["altura estrutura", "virgula", "vírgula"], sistema: null,    categoria: "Erro de Sintaxe: Vírgula em Altura Estrutura (SOI)"          },
-      { keywords: ["distrito", "municipio", "município"],     sistema: null,    categoria: "Divergência Cadastral: Distrito/Município ausente no Science" },
-    ],
-  },
-
-  // ── Valoriza — benefícios e parceiros do App Vivo ───────────────────────────
-  // Categorias baseadas nos chamados reais do sistema Valoriza.
-  // Quando novas categorias surgirem, adicione novas regras aqui.
-  "Valoriza": {
-    detectSistema: () => "Valoriza", // Valoriza é sistema único — sem subdivisão
-    defaultCategoria: "Valoriza — Geral",
-    rules: [
-      // Resgate e navegação no App Vivo
-      { keywords: ["como resgat", "como habilit", "como ativ", "caminho", "app vivo → benefícios"], sistema: "Valoriza", categoria: "Dúvida de Resgate — App Vivo"              },
-      { keywords: ["chamado indevido", "nao se refere ao valoriza", "fila correta"],                 sistema: "Valoriza", categoria: "Chamado Indevido — Redirecionamento"         },
-      // Perplexity
-      { keywords: ["perplexity", "perplexity pro", "conta pausada", "cartão de crédito perplexity"], sistema: "Valoriza", categoria: "Perplexity — Conta Pausada / Validação"    },
-      { keywords: ["perplexity", "descontinuado", "encerrado", "não está disponível"],               sistema: "Valoriza", categoria: "Perplexity — Benefício Descontinuado"       },
-      // Cinemark e parceiros
-      { keywords: ["cinemark", "cpf cinemark"],                                                      sistema: "Valoriza", categoria: "Cinemark — Problema com CPF/Voucher"        },
-      { keywords: ["voucher", "site parceiro", "carregamento de voucher"],                           sistema: "Valoriza", categoria: "Site Parceiro — Falha no Voucher"            },
-      // Vale Bônus
-      { keywords: ["vale bonus", "vale bônus", "saldo do bonus"],                                    sistema: "Valoriza", categoria: "Vale Bônus — Validação com Terceiro"        },
-      // Vivo Easy / MVE
-      { keywords: ["vivo easy"],                                                                     sistema: "Valoriza", categoria: "Chamado Indevido — Vivo Easy"               },
-      { keywords: ["mve", "meu vivo empresa", "vivo empresa"],                                       sistema: "Valoriza", categoria: "Chamado Indevido — MVE"                     },
-      // Benefícios
-      { keywords: ["clusterizado", "clusterizados", "elegibilidade", "grupo específico"],            sistema: "Valoriza", categoria: "Benefício Clusterizado — Elegibilidade"     },
-      { keywords: ["esgotado", "esgotamento", "não está mais disponível", "sem estoque"],            sistema: "Valoriza", categoria: "Benefício Esgotado"                         },
-      { keywords: ["falta de informação", "mais detalhes", "envio de print", "evidências"],          sistema: "Valoriza", categoria: "Chamado Incompleto — Falta de Evidência"    },
-      { keywords: ["data incorreta", "data da reward", "correção da data"],                          sistema: "Valoriza", categoria: "Erro de Data na Descrição do Benefício"     },
-    ],
-  },
-};
-
-/**
- * Classifica um comentário de chamado para o modo especificado.
- * Prioridade: 1) tag CATEGORIA: explícita → 2) keyword → 3) default do modo
- *
- * @param {string} texto  - Texto do comentário
- * @param {string} mode   - "Fly", "Atlas" ou "Valoriza"
- * @returns {{ sistema: string, categoria: string }}
- */
-function classificarComentario(texto, mode) {
-  const cfg = CLASSIFIER_CONFIG[mode] || CLASSIFIER_CONFIG["Fly"];
-  const txt = (texto || "").toLowerCase();
-  const sistema = cfg.detectSistema(txt);
-
-  // Prioridade 1: tag explícita CATEGORIA: no texto
-  const catMatch = texto.match(/CATEGORIA:\s*([^\n\r"]+)/i);
-  if (catMatch && catMatch[1].trim().length > 1) {
-    const categoriaRaw = catMatch[1].trim();
-    // Normaliza para evitar duplicatas por variação de escrita
-    const categoriaNorm = normalizarCategoria(categoriaRaw, mode);
-    return { sistema, categoria: categoriaNorm };
-  }
-
-  // Prioridade 2: primeira regra de keyword que bater
-  for (const rule of cfg.rules) {
-    if (rule.keywords.some((kw) => txt.includes(kw.toLowerCase()))) {
-      return { sistema: rule.sistema ?? sistema, categoria: rule.categoria };
-    }
-  }
-
-  // Prioridade 3: categoria padrão do modo
-  return { sistema, categoria: cfg.defaultCategoria };
-}
-
+// SEÇÃO 2 — CLASSIFICAÇÃO
+// As regras de categoria ficam em classificacao.js (arquivo compartilhado com o
+// script de análise semanal). Edite lá para mudar como os chamados são agrupados.
 // =============================================================================
-// SEÇÃO 2B — NORMALIZAÇÃO DE CATEGORIAS
-//
-// Unifica variações de escrita em um nome canônico único.
-// Isso evita que "Deleção de Linhas", "Deleção de linhas" e
-// "Deleção linhas OMNI" virem três categorias separadas.
-//
-// COMO FUNCIONA:
-//   1. Tenta casar com os ALIASES explícitos (mapeamento exato após normalização)
-//   2. Se não casar, aplica normalização automática de texto
-//
-// COMO ADICIONAR UMA NOVA CATEGORIA:
-//   Adicione uma entrada em CATEGORY_ALIASES abaixo.
-//   A chave é o texto normalizado (minúsculas, sem acento, sem pontuação).
-//   O valor é o nome canônico que aparecerá no dashboard.
-// =============================================================================
-
-// Remove acentos, pontuação e converte para minúsculas
-function normText(str) {
-  return (str || "")
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
-    .replace(/[^a-z0-9\s]/g, " ")                    // remove pontuação
-    .replace(/\b(de|da|do|dos|das|em|para|com|no|na|o|a|e|um|uma)\b/g, "") // stopwords
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Normaliza o NOME de uma categoria para casar a análise publicada pelo script
-// com o card do dashboard, mesmo quando a grafia difere (maiúsculas, acentos,
-// pontuação, ou descrição após ":"). Ex: "SUPORTE OPERACIONAL TÉCNICO GERAL"
-// e "Suporte Operacional Técnico Geral" viram a mesma chave.
-function normCatKey(nome) {
-  return (nome || "")
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // tira acentos
-    .toUpperCase()
-    .replace(/[.:;–—-].*$/, "")   // corta descrição após . : ; – — -
-    .replace(/[^A-Z0-9\s/]/g, " ") // remove pontuação (mantém / de "SOI/CAMUNDA")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Mapa de aliases por modo.
- * Chave: texto normalizado (via normText) de qualquer variação conhecida.
- * Valor: nome canônico que aparece no dashboard.
- *
- * Para Fly/Atlas, os nomes canônicos seguem a legenda fornecida.
- * Novas categorias que surgirem podem ser adicionadas aqui.
- */
-const CATEGORY_ALIASES = {
-  "Fly": {
-    // VENDOR
-    "impossibilitando vendor":    "IMPOSSIBILITANDO VENDOR",
-    "vendor impossibilitado":     "IMPOSSIBILITANDO VENDOR",
-    "vendor bloqueado":           "IMPOSSIBILITANDO VENDOR",
-    "grupo vendor":               "GRUPO VENDOR",
-    "vendor grupo":               "GRUPO VENDOR",
-    "cancelar vendor":            "CANCELAR VENDOR",
-    "cancelamento vendor":        "CANCELAR VENDOR",
-    "vendor cancelar":            "CANCELAR VENDOR",
-    // CANDIDATO
-    "candidato":                  "CANDIDATO",
-    "editar endereco candidato":  "CANDIDATO",
-    "correcao coordenadas":       "CANDIDATO",
-    "coordenadas candidato":      "CANDIDATO",
-    "mudanca candidato":          "CANDIDATO",
-    // ALTURA
-    "altura":                     "ALTURA",
-    "altura errada":              "ALTURA",
-    "altura incorreta":           "ALTURA",
-    "altura estrutura":           "ALTURA",
-    // STATUS SOI
-    "status soi":                 "STATUS SOI",
-    "mudanca status soi":         "STATUS SOI",
-    "alteracao status soi":       "STATUS SOI",
-    "status da soi":              "STATUS SOI",
-    // CANCELAMENTOS
-    "cancelar candidato":         "CANCELAR CANDIDATO",
-    "cancelamento candidato":     "CANCELAR CANDIDATO",
-    "cancelar soi":               "CANCELAR SOI",
-    "cancelamento soi":           "CANCELAR SOI",
-    "cancelar fcu":               "CANCELAR FCU",
-    "cancelamento fcu":           "CANCELAR FCU",
-    "fcu nula":                   "CANCELAR FCU",
-    "fcu null":                   "CANCELAR FCU",
-    // REGREDIR
-    "regredir candidato":         "REGREDIR CANDIDATO",
-    "regressao candidato":        "REGREDIR CANDIDATO",
-    "regredir state":             "REGREDIR CANDIDATO",
-    // NOME SOI
-    "nome soi":                   "NOME SOI",
-    "correcao nome soi":          "NOME SOI",
-    "nome incorreto soi":         "NOME SOI",
-    // E-MAIL
-    "email":                      "E-MAIL",
-    "e mail":                     "E-MAIL",
-    "anexar email":               "E-MAIL",
-    "email fcu":                  "E-MAIL",
-    // REJEITAR
-    "rejeitar":                   "REJEITAR",
-    "rejeicao candidato":         "REJEITAR",
-    "rejeitar candidato":         "REJEITAR",
-    // DETENTORA
-    "detentora":                  "DETENTORA",
-    "id detentora":               "DETENTORA",
-    "alteracao detentora":        "DETENTORA",
-    // STAGE SCI (específico — antes de SCI genérico)
-    "stage sci":                  "STAGE SCI",
-    "alteracao stage sci":        "STAGE SCI",
-    "stage camunda":              "STAGE SCI",
-    "stage da sci":               "STAGE SCI",
-    // VALOR FCU (específico — antes de CANCELAR FCU e FCU genérico)
-    "valor fcu":                  "VALOR FCU",
-    "valores fcu":                "VALOR FCU",
-    "inserir valor fcu":          "VALOR FCU",
-    "mudanca valor fcu":          "VALOR FCU",
-    "alteracao valor fcu":        "VALOR FCU",
-    // DELEÇÃO OMNI
-    "delecao omni":               "DELEÇÃO OMNI",
-    "delecao linhas omni":        "DELEÇÃO OMNI",
-    "deletar linhas omni":        "DELEÇÃO OMNI",
-    "deleção omni":               "DELEÇÃO OMNI",
-    "delecao linhas":             "DELEÇÃO OMNI",
-    "deleção linhas":             "DELEÇÃO OMNI",
-    "deletar linha":              "DELEÇÃO OMNI",
-    "deletar linhas":             "DELEÇÃO OMNI",
-    "remover linha":              "DELEÇÃO OMNI",
-    // RELATÓRIO
-    "relatorio":                  "RELATÓRIO",
-    "mudanca dados processo":     "RELATÓRIO",
-    "correcao dados processo":    "RELATÓRIO",
-    // SCI genérico (por último — só bate se não caiu em STAGE SCI/VALOR FCU acima)
-    "sci":                        "SCI",
-    "mudanca sci":                "SCI",
-    "insercao sci":               "SCI",
-    "dados sci":                  "SCI",
-    // SOI genérico (por último — só bate se não caiu em STATUS/NOME/CANCELAR SOI)
-    "soi":                        "SOI",
-    "mudanca soi":                "SOI",
-    "soi banco":                  "SOI",
-  },
-  "Valoriza": {}, // Valoriza usa keywords — adicionar aliases aqui se necessário
-};
-
-/**
- * Normaliza uma categoria para seu nome canônico.
- * Se não encontrar alias, aplica capitalização padronizada.
- *
- * @param {string} categoria - Texto bruto da categoria (vindo da tag CATEGORIA:)
- * @param {string} mode      - "Fly", "Atlas" ou "Valoriza"
- * @returns {string}         - Nome canônico padronizado
- */
-// Registro de categorias canônicas já vistas nesta sessão de carregamento.
-// Usado para unificar variações não mapeadas via similaridade textual.
-let _canonicasVistas = [];
-
-// Reseta o registro — chamado no início de cada carregamento de planilha
-function resetCanonicas() {
-  _canonicasVistas = [];
-}
-
-/**
- * Calcula similaridade entre duas strings normalizadas (0 a 1).
- * Usa coeficiente de Sørensen-Dice sobre bigramas — rápido e sem dependências.
- */
-function similaridade(a, b) {
-  if (a === b) return 1;
-  if (a.length < 2 || b.length < 2) return 0;
-
-  const bigramas = (s) => {
-    const pares = new Map();
-    for (let i = 0; i < s.length - 1; i++) {
-      const bg = s.substring(i, i + 2);
-      pares.set(bg, (pares.get(bg) || 0) + 1);
-    }
-    return pares;
-  };
-
-  const mapA = bigramas(a);
-  const mapB = bigramas(b);
-  let intersecao = 0;
-  let totalA = 0, totalB = 0;
-
-  mapA.forEach((v) => (totalA += v));
-  mapB.forEach((v) => (totalB += v));
-  mapA.forEach((count, bg) => {
-    if (mapB.has(bg)) intersecao += Math.min(count, mapB.get(bg));
-  });
-
-  return (2 * intersecao) / (totalA + totalB);
-}
-
-// Limiar de similaridade para unificar categorias (0.82 = bastante parecidas)
-const SIMILARITY_THRESHOLD = 0.82;
-
-function normalizarCategoria(categoria, mode) {
-  // Atlas reutiliza os aliases do Fly (mesma natureza técnica)
-  const aliasMode = mode === "Atlas" ? "Fly" : mode;
-  const aliases = CATEGORY_ALIASES[aliasMode] || {};
-  const norm    = normText(categoria);
-
-  // 1. Busca exata no mapa de aliases
-  if (aliases[norm]) return aliases[norm];
-
-  // 2. Busca parcial nos aliases mapeados
-  for (const [key, canonical] of Object.entries(aliases)) {
-    if (norm.includes(key) || key.includes(norm)) return canonical;
-  }
-
-  // 3. Similaridade fuzzy com categorias canônicas já vistas nesta sessão
-  //    Unifica variações não mapeadas (ex: "Deleção linha" ≈ "Deleção de linhas")
-  for (const vista of _canonicasVistas) {
-    if (similaridade(norm, vista.norm) >= SIMILARITY_THRESHOLD) {
-      return vista.canonical;
-    }
-  }
-
-  // 4. Nova categoria — registra e devolve padronizada em maiúsculas
-  const canonical = categoria.trim().toUpperCase();
-  _canonicasVistas.push({ norm, canonical });
-  return canonical;
-}
 
 /**
  * Extrai um detalhe específico do texto do chamado para exibir como subtítulo no card.
@@ -537,65 +219,6 @@ function extrairDetalhe(texto, categoria) {
   // Número de linha telefônica (11 dígitos começando com 0 ou 9)
   const lineMatch = texto.match(/\b(\d{10,11})\b/);
   if (lineMatch) return `Linha ${lineMatch[1]}`;
-
-  return null;
-}
-
-// =============================================================================
-// SEÇÃO 2C — DESCRIÇÃO E SUBGRUPOS DE CATEGORIAS
-//
-// Descrição: texto fixo explicando o que cada categoria engloba (legenda).
-// Subgrupos: o sistema deduz automaticamente pelas palavras do texto,
-//            agrupando chamados semelhantes dentro da mesma categoria.
-// Tudo sem IA — dedução puramente textual, sem custo de tokens.
-// =============================================================================
-
-// Descrição de cada categoria — aparece no topo do card ao abrir os detalhes.
-// A chave é o nome canônico da categoria. Adicione novas conforme necessário.
-const CATEGORY_DESCRIPTIONS = {
-  "IMPOSSIBILITANDO VENDOR":  "Vendor está impossibilitado de ser lançado.",
-  "GRUPO VENDOR":             "Grupo vendor não corresponde a nenhum no banco de dados.",
-  "CANCELAR VENDOR":          "Solicitação de cancelar acionamento vendor.",
-  "CANDIDATO":                "Problemas relacionados a mudança no candidato: editar endereço ou correção de coordenadas.",
-  "ALTURA":                   "Problemas relacionados a altura errada.",
-  "SOI":                      "Mudança da SOI no banco de dados.",
-  "STATUS SOI":               "Apenas mudança de Status da SOI.",
-  "CANCELAR CANDIDATO":       "Cancelamento de Candidato.",
-  "REGREDIR CANDIDATO":       "Regressão de state de Candidato.",
-  "CANCELAR SOI":             "Cancelamento de SOI.",
-  "NOME SOI":                 "Correção da uf_sigla da SOI.",
-  "E-MAIL":                   "Solicitação para anexar e-mail na FCU.",
-  "REJEITAR":                 "Rejeição de Candidato.",
-  "DETENTORA":                "Alteração de id_detentora.",
-  "STAGE SCI":                "Alteração de Stage da SCI e o processo no Camunda.",
-  "DELEÇÃO OMNI":             "Chamados de deleção de linhas do Omni.",
-  "CANCELAR FCU":             "Mudar o valor da FCU para NULL ou cancelá-la.",
-  "RELATÓRIO":                "Mudança de dados de processo na base.",
-  "VALOR FCU":                "Inserção ou mudança de valores de FCU.",
-  "SCI":                      "Campo relacionado a qualquer mudança/inserção de dados na SCI.",
-};
-
-/**
- * Retorna a descrição da categoria, ou null se não houver.
- */
-function getCategoryDescription(categoria) {
-  if (!categoria) return null;
-  // Busca exata
-  if (CATEGORY_DESCRIPTIONS[categoria]) return CATEGORY_DESCRIPTIONS[categoria];
-
-  const upper = categoria.toUpperCase().trim();
-
-  // Busca exata case-insensitive
-  for (const [key, desc] of Object.entries(CATEGORY_DESCRIPTIONS)) {
-    if (key.toUpperCase() === upper) return desc;
-  }
-
-  // Busca parcial rigorosa: a categoria precisa COMEÇAR com o nome canônico
-  // ou o nome canônico precisa começar com a categoria (evita casar só por "SOI" no meio)
-  for (const [key, desc] of Object.entries(CATEGORY_DESCRIPTIONS)) {
-    const k = key.toUpperCase();
-    if (upper.startsWith(k) || k.startsWith(upper)) return desc;
-  }
 
   return null;
 }
@@ -652,104 +275,39 @@ function calcularSubgrupos(tickets) {
 // =============================================================================
 
 /**
- * Busca os dados da planilha para o modo selecionado.
- * Usa a aba e o classificador corretos para cada modo.
- * @param {string} mode - "Fly", "Atlas" ou "Valoriza"
+ * Busca os dados da planilha para o modo selecionado e classifica cada chamado.
+ * A classificação usa classificarLinhas() de classificacao.js — a MESMA função
+ * do script de análise, então as categorias batem com as análises publicadas.
  */
 async function fetchSheetData(mode) {
   if (!SHEETS_API_KEY || !SPREADSHEET_ID) {
-    throw new Error(
-      "Variáveis de ambiente não configuradas. " +
-      "Crie um arquivo .env com VITE_SHEETS_API_KEY e VITE_SPREADSHEET_ID."
-    );
+    throw new Error("Variáveis de ambiente não configuradas (VITE_SHEETS_API_KEY / VITE_SPREADSHEET_ID).");
   }
-
-  const cfg       = MODE_CONFIG[mode] || MODE_CONFIG[DEFAULT_MODE];
-  const sheetName = cfg.sheetName;
-  const colDate   = cfg.colDate   ?? 0;
-  const colComment = cfg.colComment ?? 1;
-  const colId      = cfg.colId; // coluna do chamado_id (pode ser undefined)
-
-  // Limpa o registro de categorias canônicas para este carregamento
-  resetCanonicas();
-
+  const cfg = MODE_CONFIG[mode] || MODE_CONFIG[DEFAULT_MODE];
   const url =
     `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}` +
-    `/values/${encodeURIComponent(sheetName)}?key=${SHEETS_API_KEY}`;
+    `/values/${encodeURIComponent(cfg.sheetName)}?key=${SHEETS_API_KEY}`;
 
   const res = await fetch(url);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message || `HTTP ${res.status}`);
   }
-
   const json = await res.json();
   const rows = (json.values || []).slice(1);
-  const data = {};
 
-  rows.forEach((row, idx) => {
-    const rawDate    = row[colDate];
-    const comentario = String(row[colComment] || "").trim();
-    if (!rawDate || !comentario) return;
-
-    // Suporta dois formatos de data:
-    // 1. Número serial do Excel (ex: 46189.59) — usado pelo Valoriza
-    // 2. String de data legível (ex: "16/06/2026 14:28:18") — usado pelo Fly/Atlas
-    const date = parseDate(rawDate);
-    if (!date) return;
-
-    // ID real do chamado, lido da coluna configurada (chamado_id).
-    // Se a coluna não existir ou estiver vazia, cai no número da linha como fallback.
-    const idReal = colId != null ? String(row[colId] || "").trim() : "";
-    const ticketId = idReal || `#${idx + 1}`;
-
-    // Classifica usando as regras do modo ativo
-    const { sistema, categoria } = classificarComentario(comentario, mode);
-    const detalhe = extrairDetalhe(comentario, categoria);
-    const ticket  = { id: ticketId, date, system: sistema, category: categoria, detalhe, description: comentario };
-
-    if (!data[sistema])            data[sistema] = {};
-    if (!data[sistema][categoria]) data[sistema][categoria] = { tickets: [] };
-    data[sistema][categoria].tickets.push(ticket);
+  const sistema = cfg.systems[0];
+  const tickets = classificarLinhas(rows, {
+    mode, colDate: cfg.colDate, colComment: cfg.colComment, colId: cfg.colId,
   });
 
+  const data = { [sistema]: {} };
+  tickets.forEach((t) => {
+    const ticket = { ...t, system: sistema, detalhe: extrairDetalhe(t.description) };
+    if (!data[sistema][t.category]) data[sistema][t.category] = { tickets: [] };
+    data[sistema][t.category].tickets.push(ticket);
+  });
   return data;
-}
-
-/**
- * Converte qualquer formato de data suportado pelas planilhas para um objeto Date.
- * Retorna null se não conseguir converter.
- *
- * Formatos suportados:
- *   - Número serial do Excel: 46189.59 (dias desde 30/12/1899)
- *   - String de data BR: "16/06/2026 14:28:18" ou "16/06/2026"
- *   - String ISO: "2026-06-16T14:28:18"
- */
-function parseDate(raw) {
-  if (!raw) return null;
-
-  const num = Number(raw);
-
-  // Número serial do Excel (valores típicos entre 40000 e 50000 = anos 2009–2036)
-  if (!isNaN(num) && num > 40000 && num < 55000) {
-    // Fórmula: dias desde 30/12/1899, com correção do bug do ano 1900 do Excel
-    const ms = (num - 25569) * 86400 * 1000;
-    const d  = new Date(ms);
-    return isNaN(d.getTime()) ? null : d;
-  }
-
-  // Tenta string no formato BR "dd/mm/yyyy hh:mm:ss" ou "dd/mm/yyyy"
-  const str = String(raw).trim();
-  const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?/);
-  if (brMatch) {
-    const [, dd, mm, yyyy, hh = "0", mi = "0", ss = "0"] = brMatch;
-    const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss));
-    return isNaN(d.getTime()) ? null : d;
-  }
-
-  // Fallback: tenta parse nativo (ISO, etc.)
-  const d = new Date(str);
-  return isNaN(d.getTime()) ? null : d;
 }
 
 // =============================================================================
@@ -1263,9 +821,44 @@ function heatmapChartOptions(categories, title) {
 // SEÇÃO 7 — COMPONENTES DE UI
 // =============================================================================
 
+// ── Ícones (SVG simples, sem emoji) ───────────────────────────────────────────
+
+export function IconChevron({ up = false, size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 12 12" aria-hidden="true"
+      style={{ transform: up ? "rotate(180deg)" : "none", flexShrink: 0 }}>
+      <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6"
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconCheck({ size = 10 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 10 10" aria-hidden="true">
+      <path d="M1.8 5.2 4 7.4 8.2 2.8" fill="none" stroke="currentColor" strokeWidth="1.6"
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Cor de cada prioridade (bolinha ao lado do subtipo)
+export const PRIORITY_COLOR = { Alta: "red.500", "Média": "orange.400", Baixa: "green.500" };
+
+export function PriorityDot({ priority, size = "8px" }) {
+  return <Box w={size} h={size} borderRadius="full" flexShrink={0}
+    bg={PRIORITY_COLOR[priority] || "gray.300"} title={priority ? `Prioridade ${priority}` : undefined} />;
+}
+
+// Remove o prefixo do subtipo ("SOI · Erro X" → "Erro X"): o card já diz a categoria
+export function nomeCurtoSubtipo(nome) {
+  const partes = String(nome || "").split(" · ");
+  return partes.length > 1 ? partes.slice(1).join(" · ") : String(nome || "");
+}
+
 // ── StatCard ──────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, delta, color = "purple" }) {
+function StatCard({ label, value, delta, deltaLabel = "vs 30 dias anteriores", color = "purple" }) {
   const bg          = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
   return (
@@ -1281,7 +874,7 @@ function StatCard({ label, value, delta, color = "purple" }) {
           {delta !== null && delta !== undefined && (
             <StatHelpText mb="0">
               <StatArrow type={delta >= 0 ? "increase" : "decrease"} />
-              {Math.abs(delta)}% vs mês anterior
+              {Math.abs(delta)}% {deltaLabel}
             </StatHelpText>
           )}
         </Stat>
@@ -1359,7 +952,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
         <Text fontSize="sm" color={selected.length === 0 ? "gray.400" : "inherit"} noOfLines={1}>
           {label}
         </Text>
-        <Text fontSize="10px" color="gray.400" ml="2">{open ? "▲" : "▼"}</Text>
+        <Box color="gray.400" ml="2"><IconChevron up={open} /></Box>
       </Flex>
 
       {/* Dropdown */}
@@ -1395,7 +988,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
               bg={allSelected ? "purple.500" : "transparent"}
               display="flex" alignItems="center" justifyContent="center" flexShrink={0}
             >
-              {allSelected && <Text fontSize="9px" color="white" lineHeight="1">✓</Text>}
+              {allSelected && <Box color="white"><IconCheck /></Box>}
             </Box>
             <Text fontSize="12px" fontWeight="600" color="purple.600">
               {allSelected ? "Desmarcar todas" : "Selecionar todas"}
@@ -1423,7 +1016,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
                     bg={isSelected ? "purple.500" : "transparent"}
                     display="flex" alignItems="center" justifyContent="center"
                   >
-                    {isSelected && <Text fontSize="9px" color="white" lineHeight="1">✓</Text>}
+                    {isSelected && <Box color="white"><IconCheck /></Box>}
                   </Box>
                   <Text fontSize="12px" noOfLines={1}>
                     {cat.length > 50 ? cat.substring(0, 50) + "…" : cat}
@@ -1461,8 +1054,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
     <Box bg={bg} borderRadius="xl" p="5" mb="6" borderWidth="1px" borderColor={border}>
       <Flex align="center" mb="4" gap="2">
         <Box w="3" h="3" borderRadius="full" bg="purple.500" />
-        <Heading size="sm" fontWeight="600">Filtros de Análise</Heading>
-        <Text fontSize="xs" color="gray.500" ml="1">(configure antes de solicitar análise IA)</Text>
+        <Heading size="sm" fontWeight="600">Filtros</Heading>
         <Button size="xs" variant="ghost" colorScheme="gray" ml="auto" onClick={onReset}>
           Limpar filtros
         </Button>
@@ -1471,7 +1063,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
         {/* Seletor de Modo — controla qual sistema/planilha/IA é usado */}
         <FormControl>
-          <FormLabel fontSize="xs" color="gray.500">Modo do Sistema</FormLabel>
+          <FormLabel fontSize="xs" color="gray.500">Sistema</FormLabel>
           <Select
             size="sm" borderRadius="lg" value={activeMode}
             onChange={(e) => onModeChange(e.target.value)}
@@ -1509,7 +1101,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
           </Select>
         </FormControl>
         <FormControl>
-          <FormLabel fontSize="xs" color="gray.500">Prioridade IA</FormLabel>
+          <FormLabel fontSize="xs" color="gray.500">Prioridade</FormLabel>
           <Select size="sm" borderRadius="lg" value={filters.priority} onChange={(e) => onChange("priority", e.target.value)}>
             <option value="">Todas</option>
             <option value="Alta">Alta</option>
@@ -1524,7 +1116,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
 // ── AnalysisCard ──────────────────────────────────────────────────────────────
 
-function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading }) {
+function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading, anchor, periodDays }) {
   const bg           = useColorModeValue("white", "gray.800");
   const borderColor  = useColorModeValue("gray.200", "gray.700");
   const statBg       = useColorModeValue("gray.50", "gray.700");
@@ -1557,12 +1149,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
   const subgruposTexto = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
   const subgrupos = subgruposIA || subgruposTexto;
-  const [editingDesc, setEditingDesc]       = useState(false);
-  const [descOverride, setDescOverride]     = useState(null);     // legenda editada pelo usuário
-
-  // Descrição: usa a editada se existir, senão a automática
-  const descricaoAuto = getCategoryDescription(categoryName);
-  const descricao     = descOverride !== null ? descOverride : descricaoAuto;
+  const descricao = getCategoryDescription(categoryName);
 
   // Tickets filtrados pelo subgrupo selecionado (se houver).
   // Subgrupo da IA filtra por lista de IDs contra o HISTÓRICO COMPLETO (fullTickets),
@@ -1585,123 +1172,82 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
     (ticketPage + 1) * TICKETS_PER_PAGE
   );
 
-  // Coleta os detalhes únicos mais frequentes dos tickets desta categoria
-  const detalhesFreq = useMemo(() => {
-    const freq = {};
-    categoryData.tickets.forEach((t) => {
-      if (t.detalhe) freq[t.detalhe] = (freq[t.detalhe] || 0) + 1;
-    });
-    return Object.entries(freq)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([d]) => d);
-  }, [categoryData.tickets]);
+  // Variação do período atual vs o período anterior de mesmo tamanho
+  const delta = useMemo(() => {
+    if (!anchor || !periodDays || periodDays >= 9999) return null;
+    const fim    = new Date(anchor);
+    const corte  = new Date(anchor); corte.setDate(corte.getDate() - periodDays);
+    const inicio = new Date(corte);  inicio.setDate(inicio.getDate() - periodDays);
+    const base   = fullTickets || categoryData.tickets;
+    const atual    = base.filter((t) => t.date >= corte && t.date <= fim).length;
+    const anterior = base.filter((t) => t.date >= inicio && t.date < corte).length;
+    return { atual, anterior, diff: atual - anterior };
+  }, [anchor, periodDays, fullTickets, categoryData.tickets]);
+
+  const subsOrdenados = useMemo(() => (
+    analysis?.subcategorias?.length
+      ? [...analysis.subcategorias].sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0))
+      : []
+  ), [analysis]);
 
   return (
-    <Card bg={bg} borderWidth="1px" borderColor={borderColor} borderRadius="xl" shadow="sm" overflow="hidden">
-      <CardHeader pb="2" borderBottomWidth="1px" borderColor={borderColor}>
-        <Flex align="flex-start" justify="space-between" gap="2">
-          <Box flex="1">
-            <HStack mb="1" spacing="2">
-              <Badge colorScheme="purple" variant="subtle" fontSize="10px">{systemName}</Badge>
-              {analysis?.subcategorias?.length > 0 && (
-                <Badge colorScheme="green" variant="subtle" fontSize="9px" borderRadius="full">
-                  {analysis.subcategorias.length} subtipos
-                </Badge>
-              )}
-              {analysis?.detailDays && (
-                <Badge colorScheme="gray" variant="subtle" fontSize="9px" borderRadius="full">
-                  {analysis.detailDays}d
-                </Badge>
-              )}
-            </HStack>
-            <Text fontWeight="600" fontSize="sm" lineHeight="1.4">
-              {categoryName}
-            </Text>
-            <Text fontSize="11px" color="gray.500" mt="1" noOfLines={2}>
-              {getCategoryDescription(categoryName) || " "}
-            </Text>
-            {detalhesFreq.length > 0 && (
-              <HStack mt="1" spacing="1" flexWrap="wrap">
-                {detalhesFreq.map((d) => (
-                  <Badge key={d} colorScheme="gray" variant="outline" fontSize="9px" borderRadius="full">
-                    {d}
-                  </Badge>
-                ))}
-              </HStack>
+    <Card bg={bg} borderWidth="1px" borderColor={borderColor} borderRadius="xl" shadow="sm"
+      overflow="hidden" h="100%" display="flex" flexDirection="column">
+      <CardBody p="4" flex="1">
+        {/* Nome + número do período */}
+        <Flex justify="space-between" align="flex-start" gap="3">
+          <Box minW="0">
+            <Text fontWeight="700" fontSize="md" lineHeight="1.3" noOfLines={2}>{categoryName}</Text>
+            {delta && (
+              <Text fontSize="xs" mt="1" color={delta.diff > 0 ? "red.500" : delta.diff < 0 ? "green.600" : "gray.500"}>
+                {delta.diff === 0
+                  ? "igual ao período anterior"
+                  : `${delta.diff > 0 ? "+" : ""}${delta.diff} vs período anterior`}
+              </Text>
             )}
           </Box>
-          <VStack align="flex-end" spacing="0">
-            <Text fontSize="2xl" fontWeight="700" color="purple.500" lineHeight="1">
-              {categoryData.tickets.length}
-            </Text>
-            <Text fontSize="10px" color="gray.400">total</Text>
-          </VStack>
+          <Text fontSize="3xl" fontWeight="700" color="purple.600" lineHeight="1">
+            {categoryData.tickets.length}
+          </Text>
         </Flex>
-      </CardHeader>
 
-      <CardBody py="3">
-        <SimpleGrid columns={3} spacing="2" mb="3">
-          {[30, 60, 90].map((d) => (
-            <Box key={d} textAlign="center" bg={statBg} borderRadius="lg" p="2">
-              <Text fontSize="lg" fontWeight="700" color="purple.400">
-                {countInRange(fullTickets || categoryData.tickets, d)}
-              </Text>
-              <Text fontSize="10px" color="gray.500">{d}d</Text>
-            </Box>
-          ))}
-        </SimpleGrid>
+        <Divider my="3" borderColor={borderColor} />
 
-        {analysis?.subcategorias?.length > 0 ? (
-          <Box>
-            <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase" mb="2">
-              {analysis.subcategorias.length} subtipos identificados
-            </Text>
-            <VStack align="stretch" spacing="1">
-              {[...analysis.subcategorias]
-                .sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0))
-                .slice(0, 4)
-                .map((s, i) => (
-                  <Flex key={i} justify="space-between" fontSize="12px">
-                    <Text color={textColor} noOfLines={1} flex="1">{s.nome}</Text>
-                    <HStack spacing="1.5" ml="2" flexShrink={0}>
-                      {s.prioridade && <PriorityBadge priority={s.prioridade} />}
-                      <Text color="gray.500">{s.ids?.length || 0}</Text>
-                    </HStack>
-                  </Flex>
-                ))}
-              {analysis.subcategorias.length > 4 && (
-                <Text fontSize="11px" color="purple.400">
-                  +{analysis.subcategorias.length - 4} outros — ver detalhes
-                </Text>
-              )}
-            </VStack>
-          </Box>
+        {/* Principais subtipos (da análise da IA) */}
+        {subsOrdenados.length > 0 ? (
+          <VStack align="stretch" spacing="2">
+            {subsOrdenados.slice(0, 3).map((s, i) => (
+              <Flex key={i} align="center" gap="2" fontSize="13px">
+                <PriorityDot priority={s.prioridade} />
+                <Text color={textColor} noOfLines={1} flex="1" title={s.nome}>{nomeCurtoSubtipo(s.nome)}</Text>
+                <Text color="gray.500" fontWeight="600">{s.ids?.length || 0}</Text>
+              </Flex>
+            ))}
+          </VStack>
         ) : (
-          <Box textAlign="center" py="3">
-            <Text fontSize="12px" color="gray.400" mb="3">
-              Análise IA ainda não solicitada para esta categoria.
-            </Text>
+          <Flex align="center" justify="space-between">
+            <Text fontSize="13px" color="gray.400">Sem análise</Text>
             {isLoading ? (
               <Spinner size="sm" color="purple.500" />
             ) : (
               <Menu>
-                <MenuButton as={Button} size="xs" colorScheme="purple" variant="outline" borderRadius="full">
-                  ✨ Análise detalhada ▾
+                <MenuButton as={Button} size="xs" variant="ghost" colorScheme="purple"
+                  rightIcon={<IconChevron size={10} />}>
+                  Analisar
                 </MenuButton>
-                <MenuList>
-                  <MenuItem fontSize="13px" onClick={() => onRequestAnalysis(7)}>Últimos 7 dias</MenuItem>
-                  <MenuItem fontSize="13px" onClick={() => onRequestAnalysis(30)}>Últimos 30 dias</MenuItem>
+                <MenuList fontSize="13px">
+                  <MenuItem onClick={() => onRequestAnalysis(7)}>Últimos 7 dias</MenuItem>
+                  <MenuItem onClick={() => onRequestAnalysis(30)}>Últimos 30 dias</MenuItem>
                 </MenuList>
               </Menu>
             )}
-          </Box>
+          </Flex>
         )}
       </CardBody>
 
       <CardFooter pt="0" pb="3" px="4">
-        <Button size="xs" variant="ghost" colorScheme="purple" onClick={onOpen} width="full">
-          Ver detalhes & gráfico de tendência →
+        <Button size="sm" variant="link" colorScheme="purple" onClick={onOpen} fontWeight="600">
+          {subsOrdenados.length > 3 ? `Ver os ${subsOrdenados.length} subtipos e chamados` : "Ver detalhes e chamados"}
         </Button>
       </CardFooter>
 
@@ -1711,45 +1257,13 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
           <ModalHeader fontSize="md">{categoryName}</ModalHeader>
           <ModalCloseButton />
           <ModalBody pb="6">
-            <HStack mb="4" spacing="2">
-              <Badge colorScheme="purple">{systemName}</Badge>
-              {analysis?.subcategorias?.length > 0 && (
-                <Badge colorScheme="green" variant="subtle">{analysis.subcategorias.length} subtipos</Badge>
-              )}
-              <Text fontSize="xs" color="gray.500">{categoryData.tickets.length} chamados totais</Text>
-            </HStack>
-
-            {/* Descrição da categoria (legenda) — editável */}
-            <Box mb="4" p="3" bg={statBg} borderRadius="lg" borderLeftWidth="3px" borderLeftColor="purple.400">
-              <Flex justify="space-between" align="center" mb="1">
-                <Text fontSize="10px" fontWeight="700" color="purple.500" textTransform="uppercase">
-                  O que esta categoria engloba
-                </Text>
-                <Button size="xs" variant="ghost" colorScheme="purple" height="18px" fontSize="10px"
-                  onClick={() => { setEditingDesc(!editingDesc); if (descOverride === null) setDescOverride(descricao || ""); }}>
-                  {editingDesc ? "Salvar" : "✎ Editar"}
-                </Button>
-              </Flex>
-              {editingDesc ? (
-                <textarea
-                  autoFocus
-                  value={descOverride ?? ""}
-                  onChange={(e) => setDescOverride(e.target.value)}
-                  placeholder="Descreva o que esta categoria engloba..."
-                  style={{
-                    width: "100%", minHeight: "48px", fontSize: "13px", padding: "6px 8px",
-                    border: "1px solid #CBD5E0", borderRadius: "6px", outline: "none",
-                    fontFamily: "inherit", resize: "vertical", background: "transparent",
-                  }}
-                />
-              ) : descricao ? (
-                <Text fontSize="13px" color={textColor} lineHeight="1.5">{descricao}</Text>
-              ) : (
-                <Text fontSize="12px" color="gray.400" fontStyle="italic">
-                  Sem descrição definida — clique em Editar para adicionar.
-                </Text>
-              )}
-            </Box>
+            <Text fontSize="sm" color="gray.500" mb="1">
+              {categoryData.tickets.length} chamados no período
+              {analysis?.analisadoEm ? ` · análise dos últimos ${analysis.detailDays || 30} dias, feita em ${analysis.analisadoEm}` : ""}
+            </Text>
+            {descricao && (
+              <Text fontSize="sm" color={textColor} mb="4">{descricao}</Text>
+            )}
 
             {/* Subtipos analisados pela IA (causa raiz + sugestão de cada). Clicáveis para filtrar. */}
             {subgrupos.length >= 1 && (
@@ -1757,17 +1271,16 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                 <Flex justify="space-between" align="center" mb="2">
                   <HStack spacing="2">
                     <Text fontSize="11px" fontWeight="600" color="gray.500" textTransform="uppercase">
-                      Tipos de chamado nesta categoria
+                      Subtipos
                     </Text>
-                    {subgruposIA
-                      ? <Badge colorScheme="purple" variant="subtle" fontSize="9px" borderRadius="full">✨ IA</Badge>
-                      : <Badge colorScheme="gray" variant="subtle" fontSize="9px" borderRadius="full">automático</Badge>
-                    }
+                    <Text fontSize="11px" color="gray.400">
+                      {subgruposIA ? "gerados pela IA" : "agrupamento automático"}
+                    </Text>
                   </HStack>
                   {selectedSubgroup && (
                     <Button size="xs" variant="ghost" colorScheme="purple" height="18px" fontSize="10px"
                       onClick={() => { setSelectedSubgroup(null); setTicketPage(0); }}>
-                      ✕ Limpar filtro
+                      Limpar filtro
                     </Button>
                   )}
                 </Flex>
@@ -1785,14 +1298,12 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                           setTicketPage(0);
                         }}
                       >
-                        <Flex justify="space-between" mb="0.5">
-                          <Text fontSize="12px" color={textColor} fontWeight={isActive ? "700" : "500"}>
-                            {isActive ? "▸ " : ""}{sg.label}
+                        <Flex justify="space-between" align="center" gap="2" mb="1">
+                          {sg.prioridade && <PriorityDot priority={sg.prioridade} />}
+                          <Text fontSize="13px" color={textColor} fontWeight={isActive ? "700" : "500"} flex="1" title={sg.label}>
+                            {sg.fromIA ? nomeCurtoSubtipo(sg.label) : sg.label}
                           </Text>
-                          <HStack spacing="1.5" ml="2" flexShrink={0}>
-                            {sg.prioridade && <PriorityBadge priority={sg.prioridade} />}
-                            <Text fontSize="11px" color="gray.500" whiteSpace="nowrap">{sg.count} ({sg.pct}%)</Text>
-                          </HStack>
+                          <Text fontSize="12px" color="gray.500" whiteSpace="nowrap">{sg.count} ({sg.pct}%)</Text>
                         </Flex>
                         <Box bg={statBg} borderRadius="full" h="6px" overflow="hidden" mb={isActive ? "2" : "0"}>
                           <Box bg={isActive ? "purple.500" : "purple.400"} h="6px" borderRadius="full" width={`${sg.pct}%`} />
@@ -1823,11 +1334,11 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                   })}
                 </VStack>
                 <Text fontSize="10px" color="gray.400" mt="2">
-                  {subgruposIA ? "Clique num subtipo para ver a causa raiz e filtrar os chamados." : ""}
+                  {subgruposIA ? "Clique em um subtipo para ver a causa raiz e filtrar os chamados abaixo." : ""}
                 </Text>
                 {selectedSubgroup && (
                   <Text fontSize="10px" color="purple.500" mt="1">
-                    Mostrando apenas chamados do tipo "{selectedSubgroup}" na tabela abaixo.
+                    Mostrando apenas os chamados de "{nomeCurtoSubtipo(selectedSubgroup)}".
                   </Text>
                 )}
               </Box>
@@ -1849,10 +1360,10 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               {totalPages > 1 && (
                 <HStack spacing="1">
                   <Button size="xs" variant="outline" isDisabled={ticketPage === 0}
-                    onClick={() => setTicketPage((p) => p - 1)}>‹ Anterior</Button>
+                    onClick={() => setTicketPage((p) => p - 1)}>Anterior</Button>
                   <Text fontSize="xs" color="gray.500">{ticketPage + 1} / {totalPages}</Text>
                   <Button size="xs" variant="outline" isDisabled={ticketPage >= totalPages - 1}
-                    onClick={() => setTicketPage((p) => p + 1)}>Próxima ›</Button>
+                    onClick={() => setTicketPage((p) => p + 1)}>Próxima</Button>
                 </HStack>
               )}
             </Flex>
@@ -1883,13 +1394,13 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                       {expandedTicket === t.id ? (
                         <Box>
                           <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.description}</Text>
-                          <Text fontSize="10px" color="purple.400" mt="1">▲ clique para recolher</Text>
+                          <Text fontSize="10px" color="purple.400" mt="1">Clique para recolher</Text>
                         </Box>
                       ) : (
                         <Box>
                           <Text noOfLines={2} color={textColor}>{t.description}</Text>
                           {t.description.length > 100 && (
-                            <Text fontSize="10px" color="purple.400" mt="0.5">▼ clique para expandir</Text>
+                            <Text fontSize="10px" color="purple.400" mt="0.5">Clique para expandir</Text>
                           )}
                         </Box>
                       )}
@@ -1915,6 +1426,11 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
 // ── OverviewCharts ────────────────────────────────────────────────────────────
 
+// Corta textos longos só quando passam do limite
+function encurtar(txt, max) {
+  return txt.length > max ? txt.substring(0, max - 1) + "…" : txt;
+}
+
 function OverviewCharts({ data, systems }) {
   const systemsToShow = systems.filter((s) => data[s]);
 
@@ -1925,7 +1441,7 @@ function OverviewCharts({ data, systems }) {
       if (!data[sys]) return;
       Object.entries(data[sys]).forEach(([cat, val]) => {
         if (val.tickets.length > 0)
-          result.push({ name: cat.substring(0, 40) + "…", count: val.tickets.length });
+          result.push({ name: encurtar(cat, 40), count: val.tickets.length });
       });
     });
     return result.sort((a, b) => b.count - a.count).slice(0, 12);
@@ -1961,7 +1477,7 @@ function OverviewCharts({ data, systems }) {
     });
     const sorted = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 8);
     return {
-      labels: sorted.map(([k]) => k.substring(0, 30) + "…"),
+      labels: sorted.map(([k]) => encurtar(k, 30)),
       values: sorted.map(([, v]) => v),
     };
   }, [data, systemsToShow]);
@@ -1972,7 +1488,7 @@ function OverviewCharts({ data, systems }) {
         <Chart
           type="bar"
           height={Math.max(250, volumeByCategory.length * 35)}
-          options={barChartOptions(volumeByCategory.map((x) => x.name), "Top categorias — histórico completo")}
+          options={barChartOptions(volumeByCategory.map((x) => x.name), "Categorias com mais chamados")}
           series={[{ name: "Chamados", data: volumeByCategory.map((x) => x.count) }]}
         />
       </Box>
@@ -1988,7 +1504,7 @@ function OverviewCharts({ data, systems }) {
         <Chart
           type="donut"
           height={300}
-          options={donutChartOptions(donutData.labels, "Distribuição por categoria — histórico completo")}
+          options={donutChartOptions(donutData.labels, "Distribuição por categoria")}
           series={donutData.values}
         />
       </Box>
@@ -2119,12 +1635,8 @@ function DashboardApp() {
   // Alimenta TUDO na tela (cards, contagens, gráficos, lista) para que o filtro de
   // período afete a visualização inteira — não só a IA.
   // Categorias que ficam sem nenhum ticket no período são removidas.
-  const periodData = useMemo(() => {
-    // "Todo o histórico" (9999) — não filtra nada
-    if (periodDays >= 9999) return data;
-
-    // Ancora a janela no chamado mais recente de TODOS os dados (não em "hoje"),
-    // para os chamados não sumirem com o passar dos dias entre atualizações.
+  // Data do chamado mais recente da planilha — as janelas de período partem dela
+  const anchor = useMemo(() => {
     let maisRecente = null;
     Object.values(data).forEach((cats) =>
       Object.values(cats).forEach((val) =>
@@ -2133,6 +1645,13 @@ function DashboardApp() {
         })
       )
     );
+    return maisRecente;
+  }, [data]);
+
+  const periodData = useMemo(() => {
+    // "Todo o histórico" (9999) — não filtra nada
+    if (periodDays >= 9999) return data;
+    const maisRecente = anchor;
     if (!maisRecente) return {};
 
     const cutoff = new Date(maisRecente);
@@ -2149,7 +1668,7 @@ function DashboardApp() {
       });
     });
     return filtered;
-  }, [data, periodDays]);
+  }, [data, periodDays, anchor]);
 
   const allCategories = useMemo(() => {
     const cats = new Set();
@@ -2179,7 +1698,11 @@ function DashboardApp() {
         const key      = `${sys}::${cat}`;
         // Busca a análise: primeiro exata, depois por nome normalizado (casa com o script)
         const analysis = analyses[key] || analysesNorm[`${sys}::${normCatKey(cat)}`];
-        if (filters.priority && analysis?.prioridade !== filters.priority) return;
+        if (filters.priority) {
+          const temPrioridade = analysis?.prioridade === filters.priority ||
+            (analysis?.subcategorias || []).some((sub) => sub.prioridade === filters.priority);
+          if (!temPrioridade) return;
+        }
         // fullVal = histórico completo da categoria (do `data`, não do periodData filtrado).
         // Usado para as janelas 30/60/90 do card, que devem sempre refletir o histórico.
         const fullVal = data[sys]?.[cat] || val;
@@ -2216,7 +1739,7 @@ function DashboardApp() {
 
   // ── Ações ────────────────────────────────────────────────────────────────────
 
-  const loadSheetData = useCallback(async () => {
+  const loadSheetData = useCallback(async ({ silencioso = false } = {}) => {
     // Modo sem planilha configurada (ex: Atlas ainda não implantado)
     if (MODE_CONFIG[activeMode]?.naoConfigurado) {
       setSheetError(`O modo ${MODE_CONFIG[activeMode].label} ainda não tem planilha configurada. Defina VITE_SHEET_NAME_ATLAS e VITE_GEMINI_API_KEY_ATLAS quando a planilha estiver pronta.`);
@@ -2234,16 +1757,13 @@ function DashboardApp() {
     try {
       const result = await fetchSheetData(activeMode);
       setData(result);
-      setLastSync(new Date().toLocaleString("pt-BR"));
-      const total = Object.values(result).reduce(
-        (acc, sys) => acc + Object.values(sys).reduce((a, v) => a + v.tickets.length, 0), 0
-      );
-      toast({
-        title:       "Planilha carregada!",
-        description: `${total} chamados importados. Use o filtro de período para controlar o que a IA analisa.`,
-        status:      "success",
-        duration:    4000,
-      });
+      setLastSync(new Date());
+      if (!silencioso) {
+        const total = Object.values(result).reduce(
+          (acc, sys) => acc + Object.values(sys).reduce((a, v) => a + v.tickets.length, 0), 0
+        );
+        toast({ title: "Dados atualizados", description: `${total} chamados carregados.`, status: "success", duration: 3000 });
+      }
     } catch (e) {
       setSheetError(e.message);
       toast({ title: "Erro ao carregar planilha", description: e.message, status: "error", duration: 6000 });
@@ -2251,6 +1771,11 @@ function DashboardApp() {
       setSheetLoading(false);
     }
   }, [activeMode, toast]);
+
+  // Carrega a planilha sozinho ao abrir o site e ao trocar de sistema
+  useEffect(() => {
+    loadSheetData({ silencioso: true });
+  }, [loadSheetData]);
 
   // Roteador de análise: usa mock ou Gemini real dependendo do estado mockMode.
   // Passa a chave Gemini correta para o modo ativo — cada modo consome tokens separados.
@@ -2490,7 +2015,7 @@ function DashboardApp() {
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
             <div style="font-size: 13px; font-weight: 700; color: #111827; flex: 1;">${s.nome || '—'}</div>
             <div style="display: flex; align-items: center; gap: 6px; margin-left: 10px;">
-              <span style="font-size: 10px; font-weight: 700; color: ${priorityColor[s.prioridade] || '#374151'}; background: ${priorityBg[s.prioridade] || '#F9FAFB'}; padding: 2px 7px; border-radius: 999px; white-space: nowrap;">● ${s.prioridade || '—'}</span>
+              <span style="font-size: 10px; font-weight: 700; color: ${priorityColor[s.prioridade] || '#374151'}; background: ${priorityBg[s.prioridade] || '#F9FAFB'}; padding: 2px 7px; border-radius: 999px; white-space: nowrap;">${s.prioridade || '—'}</span>
               <span style="font-size: 12px; font-weight: 700; color: #6366F1; white-space: nowrap;">${s.ids?.length || 0} chamados</span>
             </div>
           </div>
@@ -2557,7 +2082,7 @@ function DashboardApp() {
   <!-- Botão de imprimir (só aparece na tela, não no PDF) -->
   <div class="no-print" style="margin-bottom: 24px; display: flex; gap: 10px;">
     <button onclick="window.print()" style="background: #6366F1; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;">
-      ⬇ Salvar como PDF
+      Salvar como PDF
     </button>
     <button onclick="window.close()" style="background: #F3F4F6; color: #374151; border: none; padding: 10px 20px; border-radius: 8px; font-family: inherit; font-size: 14px; cursor: pointer;">
       Fechar
@@ -2607,7 +2132,7 @@ function DashboardApp() {
 
   <!-- Rodapé -->
   <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #E5E7EB; display: flex; justify-content: space-between; font-size: 11px; color: #9CA3AF;">
-    <span>Dashboard Reincidência · Análise gerada pelo Gemini AI</span>
+    <span>Dashboard Reincidência · Análise gerada por IA (Claude)</span>
     <span>Gerado em ${geradoEm}</span>
   </div>
 
@@ -2696,116 +2221,85 @@ function DashboardApp() {
     <Box minH="100vh" bg={bg} fontFamily="'Inter', sans-serif">
 
       {/* HEADER */}
-      <Box bg={cardBg} borderBottomWidth="1px" borderColor={border} px="6" py="4" position="sticky" top="0" zIndex="100" shadow="sm">
-        <Flex align="center" justify="space-between">
+      <Box bg={cardBg} borderBottomWidth="1px" borderColor={border} px="6" py="3" position="sticky" top="0" zIndex="100" shadow="sm">
+        <Flex align="center" justify="space-between" gap="4" wrap="wrap">
           <HStack spacing="3">
             <Box w="9" h="9" display="flex" alignItems="center" justifyContent="center">
               <img src={LOGO_Z} alt="Z" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </Box>
             <Box>
-              <Flex align="center" gap="2">
-                <Text fontWeight="700" fontSize="lg" lineHeight="1.2">Dashboard Reincidência</Text>
-                <Badge colorScheme="purple" borderRadius="full" fontSize="10px">
-                  {MODE_CONFIG[activeMode]?.label}
-                </Badge>
-              </Flex>
-              <Flex align="center" gap="1.5" mt="0.5">
+              <Text fontWeight="700" fontSize="lg" lineHeight="1.2">Dashboard Reincidência</Text>
+              <Flex align="center" gap="1.5" mt="0.5" fontSize="12px" color="gray.500" wrap="wrap">
                 {sheetLoading ? (
                   <>
-                    <Spinner size="xs" color="blue.400" />
-                    <Text fontSize="11px" color="blue.500">Atualizando dados…</Text>
+                    <Spinner size="xs" color="purple.400" />
+                    <Text>Carregando dados…</Text>
                   </>
-                ) : lastSync ? (
+                ) : anchor ? (
                   <>
                     <Box w="6px" h="6px" borderRadius="full" bg="green.400" />
-                    <Text fontSize="11px" color="gray.500">Atualizado em {lastSync}</Text>
+                    <Text>Chamados até {anchor.toLocaleDateString("pt-BR")}</Text>
                   </>
                 ) : (
-                  <Text fontSize="11px" color="gray.500">Planilha não carregada</Text>
+                  <Text>Sem dados carregados</Text>
                 )}
                 {sharedUpdatedAt && (
-                  <Text fontSize="11px" color="green.600" ml="2">
-                    · 📢 análise da semana: {new Date(sharedUpdatedAt).toLocaleDateString("pt-BR")}
-                  </Text>
+                  <Text>· análise publicada em {new Date(sharedUpdatedAt).toLocaleDateString("pt-BR")}</Text>
                 )}
               </Flex>
             </Box>
           </HStack>
+
           <HStack spacing="2">
-            <Button
-              size="sm" borderRadius="lg"
-              variant={mockMode ? "solid" : "outline"}
-              colorScheme={mockMode ? "orange" : "gray"}
-              onClick={() => {
-                setMockMode((v) => !v);
-                toast({
-                  title:       mockMode ? "Modo Mock desativado" : "Modo Mock ativado",
-                  description: mockMode
-                    ? "As análises agora usarão o Gemini real."
-                    : "As análises usarão dados simulados — nenhum token será gasto.",
-                  status:  mockMode ? "info" : "warning",
-                  duration: 3000,
-                });
-              }}
-            >
-              {mockMode ? "🧪 Mock ON" : "🧪 Mock"}
+            <Button size="sm" variant="outline" borderRadius="lg"
+              isLoading={sheetLoading} loadingText="Atualizando"
+              onClick={() => loadSheetData()}>
+              Atualizar dados
             </Button>
-            <Button
-              size="sm" variant="outline" colorScheme="blue" borderRadius="lg"
-              isLoading={sheetLoading} loadingText="Carregando…"
-              onClick={loadSheetData}
-            >
-              {lastSync ? "↻ Sincronizar Planilha" : "⬇ Carregar Planilha"}
-            </Button>
-            <Button size="sm" variant="outline" colorScheme="teal" borderRadius="lg" onClick={downloadReport}>
-              ⬇ Exportar Relatório
+            <Button size="sm" variant="outline" borderRadius="lg" onClick={downloadReport}>
+              Exportar relatório
             </Button>
             <Menu>
-              <MenuButton as={Button}
-                size="sm" colorScheme="purple" borderRadius="lg"
-                isLoading={bulkLoading} loadingText="Analisando…"
-              >
-                Análise IA detalhada ▾
+              <MenuButton as={Button} size="sm" colorScheme="purple" borderRadius="lg"
+                isLoading={bulkLoading || publishing} loadingText={bulkLoading ? "Analisando" : "Publicando"}
+                rightIcon={<IconChevron />}>
+                Ações da IA
               </MenuButton>
-              <MenuList>
-                <MenuItem onClick={() => requestBulkAnalysis(7)}>
-                  Analisar últimos 7 dias
+              <MenuList fontSize="sm">
+                <MenuItem onClick={() => requestBulkAnalysis(7)}>Analisar categorias sem análise (7 dias)</MenuItem>
+                <MenuItem onClick={() => requestBulkAnalysis(30)}>Analisar categorias sem análise (30 dias)</MenuItem>
+                {failedCats.length > 0 && (
+                  <MenuItem onClick={() => requestBulkAnalysis(lastDetailDays, failedCats)}>
+                    Repetir as que falharam ({failedCats.length})
+                  </MenuItem>
+                )}
+                <MenuDivider />
+                <MenuItem isDisabled={Object.keys(analyses).length === 0} onClick={handlePublishAnalyses}>
+                  Publicar análise para todos
                 </MenuItem>
-                <MenuItem onClick={() => requestBulkAnalysis(30)}>
-                  Analisar últimos 30 dias
+                <MenuItem isDisabled={Object.keys(analyses).length === 0} onClick={handleClearAnalyses} color="red.500">
+                  Limpar análises deste navegador
+                </MenuItem>
+                <MenuDivider />
+                <MenuItem onClick={() => {
+                  setMockMode((v) => !v);
+                  toast({
+                    title:    mockMode ? "Modo de teste desligado" : "Modo de teste ligado",
+                    description: mockMode ? "As análises voltam a usar a IA real." : "As análises usam dados simulados, sem gastar tokens.",
+                    status:   "info",
+                    duration: 3000,
+                  });
+                }}>
+                  {mockMode ? "Desligar modo de teste" : "Ligar modo de teste (sem gastar tokens)"}
                 </MenuItem>
               </MenuList>
             </Menu>
-            {failedCats.length > 0 && !bulkLoading && (
-              <Button
-                size="sm" colorScheme="orange" variant="outline" borderRadius="lg"
-                onClick={() => requestBulkAnalysis(lastDetailDays, failedCats)}
-              >
-                ↻ Repetir falhas ({failedCats.length})
-              </Button>
-            )}
-            {Object.keys(analyses).length > 0 && (
-              <Button
-                size="sm" colorScheme="green" borderRadius="lg"
-                isLoading={publishing} loadingText="Publicando…"
-                onClick={handlePublishAnalyses}
-              >
-                📢 Publicar p/ todos
-              </Button>
-            )}
-            {Object.keys(analyses).length > 0 && (
-              <Button size="sm" variant="ghost" colorScheme="red" borderRadius="lg" onClick={handleClearAnalyses}>
-                🗑 Limpar análises
-              </Button>
-            )}
             {ACCESS_PASSWORD && (
-              <Button
-                size="sm" variant="ghost" colorScheme="gray" borderRadius="lg"
+              <Button size="sm" variant="ghost" borderRadius="lg"
                 onClick={() => {
                   try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (_) { /* ignora */ }
                   window.location.reload();
-                }}
-              >
+                }}>
                 Sair
               </Button>
             )}
@@ -2815,35 +2309,21 @@ function DashboardApp() {
 
       <Box maxW="1600px" mx="auto" px="6" py="6">
 
-        {/* Banner modo Mock */}
         {mockMode && (
           <Alert status="warning" borderRadius="xl" mb="5" variant="left-accent">
             <AlertIcon />
             <AlertDescription fontSize="sm">
-              <strong>Modo Mock ativo</strong> — as análises IA estão usando dados simulados.
-              Nenhuma chamada real está sendo feita ao Gemini e nenhum token está sendo gasto.
-              Clique em <strong>🧪 Mock ON</strong> no header para voltar ao modo real.
+              <strong>Modo de teste ligado.</strong> As análises usam dados simulados e não gastam tokens.
+              Para desligar, use o menu Ações da IA.
             </AlertDescription>
           </Alert>
         )}
 
-        {/* Erro */}
         {sheetError && (
           <Alert status="error" borderRadius="xl" mb="5" variant="left-accent">
             <AlertIcon />
             <AlertDescription fontSize="sm">
-              Erro ao carregar planilha: <strong>{sheetError}</strong>.{" "}
-              Verifique se a planilha está pública e as variáveis de ambiente estão configuradas.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Estado vazio inicial */}
-        {!sheetLoading && !lastSync && !sheetError && (
-          <Alert status="info" borderRadius="xl" mb="5" variant="left-accent">
-            <AlertIcon />
-            <AlertDescription fontSize="sm">
-              Clique em <strong>"⬇ Carregar Planilha"</strong> para importar os dados do Google Sheets.
+              Não foi possível carregar a planilha: <strong>{sheetError}</strong>
             </AlertDescription>
           </Alert>
         )}
@@ -2859,16 +2339,17 @@ function DashboardApp() {
         />
 
         <SimpleGrid columns={{ base: 2, md: 4 }} spacing="4" mb="6">
-          <StatCard label={periodDays >= 9999 ? "Total de chamados" : `Chamados (${periodDays}d)`} value={totalTickets.toLocaleString("pt-BR")} color="purple" />
-          <StatCard label="Últimos 30 dias"        value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="blue" />
-          <StatCard label="Categorias ativas"      value={filteredCards.length} color="teal" />
-          <StatCard label={`${MODE_CONFIG[activeMode]?.label} — Analisadas`} value={`${analysedCount}/${filteredCards.length}`} color="orange" />
+          <StatCard label={periodDays >= 9999 ? "Chamados (todo o histórico)" : `Chamados (${periodDays} dias)`} value={totalTickets.toLocaleString("pt-BR")} color="purple" />
+          <StatCard label="Últimos 30 dias" value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="blue" />
+          <StatCard label="Categorias" value={filteredCards.length} color="teal" />
+          <StatCard label="Com análise da IA" value={`${analysedCount} de ${filteredCards.length}`} color="orange" />
         </SimpleGrid>
 
-        <Tabs colorScheme="purple" variant="soft-rounded" defaultIndex={0}>
+        <Tabs colorScheme="purple" variant="soft-rounded" defaultIndex={1} isLazy>
           <TabList mb="5" bg={cardBg} p="1" borderRadius="xl" borderWidth="1px" borderColor={border} gap="1">
-            <Tab fontSize="sm" borderRadius="lg">Visão Geral</Tab>
-            <Tab fontSize="sm" borderRadius="lg">Chamados por Categoria</Tab>
+            <Tab fontSize="sm" borderRadius="lg">Visão geral</Tab>
+            <Tab fontSize="sm" borderRadius="lg">Chamados por categoria</Tab>
+            <Tab fontSize="sm" borderRadius="lg">Painel</Tab>
           </TabList>
 
           <TabPanels>
@@ -2879,19 +2360,20 @@ function DashboardApp() {
             <TabPanel px="0">
               {filteredCards.length === 0 ? (
                 <Box textAlign="center" py="16" color="gray.400">
-                  <Text>Nenhuma categoria encontrada com os filtros atuais.</Text>
+                  <Text>{sheetLoading ? "Carregando…" : "Nenhuma categoria encontrada com os filtros atuais."}</Text>
                 </Box>
               ) : (
                 <>
-                  <Flex justify="space-between" align="center" mb="4">
+                  <Flex justify="space-between" align="center" mb="4" wrap="wrap" gap="2">
                     <Text fontSize="sm" color="gray.500">
-                      {filteredCards.length} categorias · {analysedCount} analisadas pela IA
+                      {filteredCards.length} categorias, da maior para a menor
                     </Text>
-                    {analysedCount < filteredCards.length && (
-                      <Text fontSize="xs" color="purple.500">
-                        {filteredCards.length - analysedCount} aguardando análise
-                      </Text>
-                    )}
+                    <HStack spacing="4" fontSize="xs" color="gray.500">
+                      <Text>Prioridade:</Text>
+                      {["Alta", "Média", "Baixa"].map((p) => (
+                        <HStack key={p} spacing="1.5"><PriorityDot priority={p} /><Text>{p}</Text></HStack>
+                      ))}
+                    </HStack>
                   </Flex>
                   <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing="4">
                     {filteredCards.map(({ sys, cat, val, fullVal, key, analysis }) => (
@@ -2902,6 +2384,8 @@ function DashboardApp() {
                         categoryData={val}
                         fullTickets={fullVal.tickets}
                         analysis={analysis}
+                        anchor={anchor}
+                        periodDays={periodDays}
                         isLoading={!!loadingKeys[key]}
                         onRequestAnalysis={(dias) => requestAnalysis(sys, cat, dias)}
                       />
@@ -2911,11 +2395,39 @@ function DashboardApp() {
               )}
             </TabPanel>
 
+            <TabPanel px="0">
+              <Painel modos={MODOS_PAINEL} carregar={carregarSistemaPainel} />
+            </TabPanel>
           </TabPanels>
         </Tabs>
       </Box>
     </Box>
   );
+}
+
+// ── Dados para o Painel ───────────────────────────────────────────────────────
+// Sistemas que têm planilha configurada (o Atlas fica de fora até ter planilha)
+const MODOS_PAINEL = Object.keys(MODE_CONFIG)
+  .filter((m) => !MODE_CONFIG[m].naoConfigurado)
+  .map((m) => ({ id: m, label: MODE_CONFIG[m].label }));
+
+// Carrega planilha + análise publicada de um sistema, no formato que o Painel usa
+async function carregarSistemaPainel(mode) {
+  const [data, shared] = await Promise.all([fetchSheetData(mode), fetchSharedAnalyses(mode)]);
+  const sistema = MODE_CONFIG[mode].systems[0];
+  const categorias = data[sistema] || {};
+  const analises = shared?.analyses || {};
+  const idx = {};
+  Object.entries(analises).forEach(([key, val]) => {
+    const cat = key.split("::").slice(1).join("::");
+    idx[normCatKey(cat)] = val;
+  });
+  const tickets = Object.values(categorias).flatMap((c) => c.tickets);
+  return {
+    tickets,
+    analisePorCategoria: (cat) => idx[normCatKey(cat)] || null,
+    analisePublicadaEm: shared?.atualizadoEm || null,
+  };
 }
 
 // =============================================================================
@@ -2999,6 +2511,11 @@ export default function VivoDashboard() {
 
   if (!autenticado) {
     return <LoginScreen onLogin={() => setAutenticado(true)} />;
+  }
+  // Link para TV: https://<site>/?painel abre só o painel rotativo
+  const modoTV = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("painel");
+  if (modoTV) {
+    return <Painel modos={MODOS_PAINEL} carregar={carregarSistemaPainel} modoTV />;
   }
   return <DashboardApp />;
 }
