@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 
-// Logo do dashboard (imagem Z) embutida em base64 — não depende de arquivo externo
-const LOGO_Z = "data:image/png;base64,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";
+// Logo da Zukk (palavra "ZUKK" sobre o azul-marinho da marca), embutida em base64
+const LOGO_ZUKK = "data:image/png;base64,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";
 import {
   Box, Flex, Heading, Text, Button, Select,
   Badge, Divider, Spinner, useColorModeValue,
@@ -241,10 +241,22 @@ const SUBGROUP_RULES = [
 
 /**
  * Deduz o subgrupo de um chamado a partir do texto (sem IA).
+ * Olha só a parte que descreve o que foi feito ("AÇÃO REALIZADA:"), ou o
+ * começo do comentário quando não há esse campo — o resto do texto (respostas
+ * longas do suporte) citava "status", "alterar" etc. e jogava quase tudo no
+ * mesmo subgrupo.
  * @returns {string} label do subgrupo, ou "Outros" se nada bater.
  */
+function trechoParaSubgrupo(texto) {
+  const t = String(texto || "");
+  const acao = t.match(/A[ÇC][ÃA]O REALIZADA:\s*([^\n\r]+)/i);
+  const problema = t.match(/PROBLEMA REPORTADO:\s*([^\n\r]+)/i);
+  const base = acao ? acao[1] : problema ? problema[1] : t.substring(0, 200);
+  return base.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 function deduzirSubgrupo(texto) {
-  const txt = (texto || "").toLowerCase();
+  const txt = trechoParaSubgrupo(texto);
   for (const rule of SUBGROUP_RULES) {
     if (rule.match.some((kw) => txt.includes(kw))) return rule.label;
   }
@@ -763,8 +775,9 @@ function percentChange(current, previous) {
 // =============================================================================
 
 const CHART_COLORS = [
-  "#6366F1", "#10B981", "#F59E0B", "#EF4444",
-  "#8B5CF6", "#06B6D4", "#F97316", "#84CC16", "#EC4899",
+  // Cores da marca primeiro (turquesa e azul-marinho), depois cores de apoio
+  "#2C98A5", "#04142E", "#58C8D8", "#5A6A8E",
+  "#F59E0B", "#EF4444", "#16A34A", "#A3E2EB", "#1B6670",
 ];
 
 const BASE_CHART_CONFIG = { toolbar: { show: false }, fontFamily: "Inter, sans-serif" };
@@ -858,7 +871,7 @@ export function nomeCurtoSubtipo(nome) {
 
 // ── StatCard ──────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, delta, deltaLabel = "vs 30 dias anteriores", color = "purple" }) {
+function StatCard({ label, value, delta, deltaLabel = "vs 30 dias anteriores", color = "brand" }) {
   const bg          = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
   return (
@@ -868,7 +881,7 @@ function StatCard({ label, value, delta, deltaLabel = "vs 30 dias anteriores", c
           <StatLabel fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="wider">
             {label}
           </StatLabel>
-          <StatNumber fontSize="2xl" fontWeight="700" color={`${color}.500`}>
+          <StatNumber fontSize="2xl" fontWeight="700" color={`${color}.600`}>
             {value}
           </StatNumber>
           {delta !== null && delta !== undefined && (
@@ -905,7 +918,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
   const ref                   = useRef(null);
   const bg                    = useColorModeValue("white", "gray.800");
   const border                = useColorModeValue("gray.200", "gray.600");
-  const hoverBg               = useColorModeValue("purple.50", "purple.900");
+  const hoverBg               = useColorModeValue("brand.50", "brand.900");
 
   // Fecha ao clicar fora
   useEffect(() => {
@@ -946,7 +959,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
         align="center" justify="space-between"
         px="3" py="1.5" borderRadius="lg" borderWidth="1px" borderColor={border}
         bg={bg} cursor="pointer" fontSize="sm" onClick={() => setOpen((v) => !v)}
-        _hover={{ borderColor: "purple.400" }}
+        _hover={{ borderColor: "brand.400" }}
         minH="32px"
       >
         <Text fontSize="sm" color={selected.length === 0 ? "gray.400" : "inherit"} noOfLines={1}>
@@ -984,13 +997,13 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
           >
             <Box
               w="14px" h="14px" borderRadius="3px" borderWidth="1.5px"
-              borderColor={allSelected ? "purple.500" : border}
-              bg={allSelected ? "purple.500" : "transparent"}
+              borderColor={allSelected ? "brand.500" : border}
+              bg={allSelected ? "brand.500" : "transparent"}
               display="flex" alignItems="center" justifyContent="center" flexShrink={0}
             >
               {allSelected && <Box color="white"><IconCheck /></Box>}
             </Box>
-            <Text fontSize="12px" fontWeight="600" color="purple.600">
+            <Text fontSize="12px" fontWeight="600" color="brand.600">
               {allSelected ? "Desmarcar todas" : "Selecionar todas"}
             </Text>
             <Badge ml="auto" colorScheme="gray" variant="subtle" fontSize="9px">
@@ -1012,8 +1025,8 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
                 >
                   <Box
                     w="14px" h="14px" borderRadius="3px" borderWidth="1.5px" flexShrink={0}
-                    borderColor={isSelected ? "purple.500" : border}
-                    bg={isSelected ? "purple.500" : "transparent"}
+                    borderColor={isSelected ? "brand.500" : border}
+                    bg={isSelected ? "brand.500" : "transparent"}
                     display="flex" alignItems="center" justifyContent="center"
                   >
                     {isSelected && <Box color="white"><IconCheck /></Box>}
@@ -1053,7 +1066,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
   return (
     <Box bg={bg} borderRadius="xl" p="5" mb="6" borderWidth="1px" borderColor={border}>
       <Flex align="center" mb="4" gap="2">
-        <Box w="3" h="3" borderRadius="full" bg="purple.500" />
+        <Box w="3" h="3" borderRadius="full" bg="brand.500" />
         <Heading size="sm" fontWeight="600">Filtros</Heading>
         <Button size="xs" variant="ghost" colorScheme="gray" ml="auto" onClick={onReset}>
           Limpar filtros
@@ -1067,7 +1080,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
           <Select
             size="sm" borderRadius="lg" value={activeMode}
             onChange={(e) => onModeChange(e.target.value)}
-            fontWeight="600" color="purple.600"
+            fontWeight="600" color="brand.600"
           >
             {Object.keys(MODE_CONFIG).map((m) => (
               <option key={m} value={m}>{MODE_CONFIG[m].label}</option>
@@ -1079,7 +1092,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
           <FormLabel fontSize="xs" color="gray.500">
             Categoria
             {filters.categories.length > 0 && (
-              <Badge ml="2" colorScheme="purple" borderRadius="full" fontSize="9px">
+              <Badge ml="2" colorScheme="brand" borderRadius="full" fontSize="9px">
                 {filters.categories.length} selecionadas
               </Badge>
             )}
@@ -1165,7 +1178,13 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
     return categoryData.tickets.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
   }, [categoryData.tickets, fullTickets, selectedSubgroup, subgrupos]);
 
-  const trend            = getMonthlyTrend(fullTickets || categoryData.tickets);
+  // Base da tabela quando há subtipo selecionado: subtipo da IA usa o histórico
+  // completo (os IDs vêm da janela da análise); subtipo automático usa o período.
+  const baseFiltro = selectedSubgroup && subgrupos.find((s) => s.label === selectedSubgroup)?.fromIA
+    ? (fullTickets || categoryData.tickets)
+    : categoryData.tickets;
+  // A tendência acompanha o subtipo selecionado
+  const trend            = getMonthlyTrend(selectedSubgroup ? visibleTickets : (fullTickets || categoryData.tickets));
   const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
   const paginatedTickets = visibleTickets.slice(
     ticketPage * TICKETS_PER_PAGE,
@@ -1206,7 +1225,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               </Text>
             )}
           </Box>
-          <Text fontSize="3xl" fontWeight="700" color="purple.600" lineHeight="1">
+          <Text fontSize="3xl" fontWeight="700" color="brand.600" lineHeight="1">
             {categoryData.tickets.length}
           </Text>
         </Flex>
@@ -1228,10 +1247,10 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
           <Flex align="center" justify="space-between">
             <Text fontSize="13px" color="gray.400">Sem análise</Text>
             {isLoading ? (
-              <Spinner size="sm" color="purple.500" />
+              <Spinner size="sm" color="brand.500" />
             ) : (
               <Menu>
-                <MenuButton as={Button} size="xs" variant="ghost" colorScheme="purple"
+                <MenuButton as={Button} size="xs" variant="ghost" colorScheme="brand"
                   rightIcon={<IconChevron size={10} />}>
                   Analisar
                 </MenuButton>
@@ -1246,7 +1265,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
       </CardBody>
 
       <CardFooter pt="0" pb="3" px="4">
-        <Button size="sm" variant="link" colorScheme="purple" onClick={onOpen} fontWeight="600">
+        <Button size="sm" variant="link" colorScheme="brand" onClick={onOpen} fontWeight="600">
           {subsOrdenados.length > 3 ? `Ver os ${subsOrdenados.length} subtipos e chamados` : "Ver detalhes e chamados"}
         </Button>
       </CardFooter>
@@ -1278,7 +1297,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                     </Text>
                   </HStack>
                   {selectedSubgroup && (
-                    <Button size="xs" variant="ghost" colorScheme="purple" height="18px" fontSize="10px"
+                    <Button size="xs" variant="ghost" colorScheme="brand" height="18px" fontSize="10px"
                       onClick={() => { setSelectedSubgroup(null); setTicketPage(0); }}>
                       Limpar filtro
                     </Button>
@@ -1290,12 +1309,13 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                     return (
                       <Box
                         key={sg.label} cursor="pointer" p="2" borderRadius="md"
-                        bg={isActive ? "purple.50" : "transparent"}
-                        borderWidth="1px" borderColor={isActive ? "purple.300" : "transparent"}
-                        _hover={{ bg: isActive ? "purple.50" : statBg }}
+                        bg={isActive ? "brand.50" : "transparent"}
+                        borderWidth="1px" borderColor={isActive ? "brand.300" : "transparent"}
+                        _hover={{ bg: isActive ? "brand.50" : statBg }}
                         onClick={() => {
                           setSelectedSubgroup(isActive ? null : sg.label);
                           setTicketPage(0);
+                          setExpandedTicket(null);
                         }}
                       >
                         <Flex justify="space-between" align="center" gap="2" mb="1">
@@ -1306,7 +1326,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                           <Text fontSize="12px" color="gray.500" whiteSpace="nowrap">{sg.count} ({sg.pct}%)</Text>
                         </Flex>
                         <Box bg={statBg} borderRadius="full" h="6px" overflow="hidden" mb={isActive ? "2" : "0"}>
-                          <Box bg={isActive ? "purple.500" : "purple.400"} h="6px" borderRadius="full" width={`${sg.pct}%`} />
+                          <Box bg={isActive ? "brand.500" : "brand.400"} h="6px" borderRadius="full" width={`${sg.pct}%`} />
                         </Box>
                         {/* Ao expandir um subtipo da IA, mostra causa raiz e sugestão */}
                         {isActive && sg.fromIA && (sg.motivo || sg.sugestao) && (
@@ -1337,7 +1357,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                   {subgruposIA ? "Clique em um subtipo para ver a causa raiz e filtrar os chamados abaixo." : ""}
                 </Text>
                 {selectedSubgroup && (
-                  <Text fontSize="10px" color="purple.500" mt="1">
+                  <Text fontSize="10px" color="brand.500" mt="1">
                     Mostrando apenas os chamados de "{nomeCurtoSubtipo(selectedSubgroup)}".
                   </Text>
                 )}
@@ -1355,7 +1375,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
             <Flex justify="space-between" align="center" mb="3">
               <Text fontWeight="600" fontSize="sm">
-                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${(fullTickets || categoryData.tickets).length}` : ""})
+                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${baseFiltro.length}` : ""})
               </Text>
               {totalPages > 1 && (
                 <HStack spacing="1">
@@ -1378,35 +1398,39 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                 </Tr>
               </Thead>
               <Tbody>
-                {paginatedTickets.map((t) => (
-                  <Tr key={t.id} _hover={{ bg: statBg }} cursor="pointer"
-                    onClick={() => setExpandedTicket(expandedTicket === t.id ? null : t.id)}>
-                    <Td px="2"><Text fontSize="11px" fontFamily="mono" color="purple.500" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">{t.id}</Text></Td>
+                {paginatedTickets.map((t, i) => {
+                  // Um chamado pode ter vários comentários: a chave da linha precisa ser única
+                  const rowKey = `${t.id}-${t.date.getTime()}-${i}`;
+                  return (
+                  <Tr key={rowKey} _hover={{ bg: statBg }} cursor="pointer"
+                    onClick={() => setExpandedTicket(expandedTicket === rowKey ? null : rowKey)}>
+                    <Td px="2"><Text fontSize="11px" fontFamily="mono" color="brand.500" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">{t.id}</Text></Td>
                     <Td px="2" fontSize="11px" whiteSpace="nowrap">{t.date.toLocaleDateString("pt-BR")}</Td>
                     <Td px="2">
                       {t.detalhe && (
-                        <Badge colorScheme="purple" variant="subtle" fontSize="9px" borderRadius="full" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis" maxW="100%">
+                        <Badge colorScheme="brand" variant="subtle" fontSize="9px" borderRadius="full" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis" maxW="100%">
                           {t.detalhe}
                         </Badge>
                       )}
                     </Td>
                     <Td px="2" fontSize="11px">
-                      {expandedTicket === t.id ? (
+                      {expandedTicket === rowKey ? (
                         <Box>
                           <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.description}</Text>
-                          <Text fontSize="10px" color="purple.400" mt="1">Clique para recolher</Text>
+                          <Text fontSize="10px" color="brand.400" mt="1">Clique para recolher</Text>
                         </Box>
                       ) : (
                         <Box>
                           <Text noOfLines={2} color={textColor}>{t.description}</Text>
                           {t.description.length > 100 && (
-                            <Text fontSize="10px" color="purple.400" mt="0.5">Clique para expandir</Text>
+                            <Text fontSize="10px" color="brand.400" mt="0.5">Clique para expandir</Text>
                           )}
                         </Box>
                       )}
                     </Td>
                   </Tr>
-                ))}
+                  );
+                })}
               </Tbody>
             </Table>
 
@@ -1977,178 +2001,163 @@ function DashboardApp() {
     }
   }, [data, filters.system, filters.categories, analyses, mockMode, activeMode, toast]);
 
-  // Gera e baixa um relatório HTML formatado para impressão/PDF
-  // com apenas as categorias que já foram analisadas pela IA.
+  // Gera um relatório HTML (para imprimir/salvar em PDF) que segue os FILTROS
+  // da tela: período, categorias selecionadas e prioridade.
   const downloadReport = useCallback(() => {
     const sys = filters.system;
-    if (!sys) {
-      toast({ title: "Selecione um sistema para exportar", status: "warning", duration: 3000 });
+    const catsPeriodo = periodData[sys] || {};
+    const nomes = Object.keys(catsPeriodo)
+      .filter((n) => filters.categories.length === 0 || filters.categories.includes(n));
+
+    if (nomes.length === 0) {
+      toast({ title: "Nada para exportar", description: "Não há chamados com os filtros atuais.", status: "warning", duration: 4000 });
       return;
     }
 
-    // Coleta apenas categorias que têm análise da IA (com subtipos)
-    const analysedCategories = Object.entries(data[sys] || {})
-      .map(([name, val]) => ({
-        name,
-        total:    val.tickets.length,
-        last30:   countInRange(val.tickets, 30),
-        analysis: analyses[`${sys}::${name}`] || null,
-      }))
-      .filter((c) => c.analysis?.subcategorias?.length > 0)
+    const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const fmt = (d) => d.toLocaleDateString("pt-BR");
+
+    // Rótulo do período
+    let periodoLabel = "Todo o histórico";
+    if (periodDays < 9999 && anchor) {
+      const ini = new Date(anchor); ini.setDate(ini.getDate() - periodDays);
+      periodoLabel = `Últimos ${periodDays} dias (${fmt(ini)} a ${fmt(anchor)})`;
+    }
+
+    // Monta cada categoria: subtipos da IA contam só os chamados DENTRO do período
+    const categorias = nomes.map((name) => {
+      const tickets  = catsPeriodo[name].tickets;
+      const idsNoPeriodo = new Set(tickets.map((t) => String(t.id).replace("#", "")));
+      const analysis = analyses[`${sys}::${name}`] || analysesNorm[`${sys}::${normCatKey(name)}`] || null;
+      let subs = (analysis?.subcategorias || [])
+        .map((sub) => {
+          const ids = (sub.ids || []).map((id) => String(id).replace("#", "")).filter((id) => idsNoPeriodo.has(id));
+          return { ...sub, ids };
+        })
+        .filter((sub) => sub.ids.length > 0)
+        .sort((a, b) => b.ids.length - a.ids.length);
+      if (filters.priority) subs = subs.filter((sub) => sub.prioridade === filters.priority);
+      return { name, total: tickets.length, subs };
+    })
+      .filter((c) => !filters.priority || c.subs.length > 0)
       .sort((a, b) => b.total - a.total);
 
-    if (analysedCategories.length === 0) {
-      toast({ title: "Nenhuma análise disponível", description: "Solicite ao menos uma análise IA antes de exportar.", status: "warning", duration: 4000 });
+    if (categorias.length === 0) {
+      toast({ title: "Nada para exportar", description: "Nenhuma categoria com essa prioridade no período.", status: "warning", duration: 4000 });
       return;
     }
 
-    const geradoEm = new Date().toLocaleString("pt-BR");
+    const totalChamados = categorias.reduce((acc, c) => acc + c.total, 0);
+    const comAnalise    = categorias.filter((c) => c.subs.length > 0);
+    const todosSubs     = comAnalise.flatMap((c) => c.subs);
+    const qtdPrioridade = (p) => todosSubs.filter((sub) => sub.prioridade === p).length;
+    const geradoEm      = new Date().toLocaleString("pt-BR");
 
-    const priorityColor = { Alta: "#DC2626", Média: "#D97706", Baixa: "#16A34A" };
-    const priorityBg    = { Alta: "#FEF2F2", Média: "#FFFBEB", Baixa: "#F0FDF4" };
+    const COR = { navy: "#04142E", turquesa: "#2C98A5", turquesaClaro: "#58C8D8", texto: "#1F2937", cinza: "#6B7280", borda: "#E5E7EB" };
+    const priorityColor = { Alta: "#DC2626", "Média": "#D97706", Baixa: "#16A34A" };
 
-    // Cada categoria vira uma seção com seus subtipos listados
-    const categorySections = analysedCategories.map((c) => {
-      const subs = [...c.analysis.subcategorias].sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0));
-      const subRows = subs.map((s) => `
-        <div style="border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; margin-bottom: 10px; page-break-inside: avoid;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-            <div style="font-size: 13px; font-weight: 700; color: #111827; flex: 1;">${s.nome || '—'}</div>
-            <div style="display: flex; align-items: center; gap: 6px; margin-left: 10px;">
-              <span style="font-size: 10px; font-weight: 700; color: ${priorityColor[s.prioridade] || '#374151'}; background: ${priorityBg[s.prioridade] || '#F9FAFB'}; padding: 2px 7px; border-radius: 999px; white-space: nowrap;">${s.prioridade || '—'}</span>
-              <span style="font-size: 12px; font-weight: 700; color: #6366F1; white-space: nowrap;">${s.ids?.length || 0} chamados</span>
-            </div>
-          </div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div style="background: #FEF2F2; border-radius: 6px; padding: 9px;">
-              <div style="font-size: 9px; font-weight: 700; color: #DC2626; text-transform: uppercase; margin-bottom: 4px;">Causa Raiz</div>
-              <div style="font-size: 11px; color: #374151; line-height: 1.5;">${s.motivo || '—'}</div>
-            </div>
-            <div style="background: #F0FDFA; border-radius: 6px; padding: 9px;">
-              <div style="font-size: 9px; font-weight: 700; color: #0D9488; text-transform: uppercase; margin-bottom: 4px;">Sugestão de Automação</div>
-              <div style="font-size: 11px; color: #374151; line-height: 1.5;">${s.sugestao || '—'}</div>
-            </div>
-          </div>
-          ${s.ids?.length ? `<div style="font-size: 10px; color: #9CA3AF; margin-top: 6px;">IDs: ${s.ids.join(", ")}</div>` : ""}
-        </div>`).join("");
+    // Tabela-resumo com todas as categorias do período
+    const linhasResumo = categorias.map((c) => `
+      <tr>
+        <td style="padding:7px 10px;border-bottom:1px solid ${COR.borda};font-weight:600;">${esc(c.name)}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid ${COR.borda};text-align:right;font-weight:700;color:${COR.navy};">${c.total}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid ${COR.borda};color:${COR.cinza};">${c.subs[0] ? esc(nomeCurtoSubtipo(c.subs[0].nome)) : "sem análise"}</td>
+      </tr>`).join("");
 
-      return `
-      <div class="category" style="page-break-inside: avoid; margin-bottom: 28px; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden;">
-        <div class="cat-header" style="background: #F9FAFB; padding: 14px 18px; border-bottom: 1px solid #E5E7EB; display: flex; justify-content: space-between; align-items: flex-start;">
-          <div style="flex: 1;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-              <span style="font-size: 11px; font-weight: 600; color: #6366F1; background: #EEF2FF; padding: 2px 8px; border-radius: 999px;">${sys}</span>
-              <span style="font-size: 11px; font-weight: 600; color: #16A34A; background: #F0FDF4; padding: 2px 8px; border-radius: 999px;">${subs.length} subtipos</span>
-              <span style="font-size: 11px; color: #6B7280;">análise de ${c.analysis.detailDays || 30}d</span>
-            </div>
-            <div style="font-size: 15px; font-weight: 700; color: #111827;">${c.name}</div>
-          </div>
-          <div style="text-align: right; margin-left: 16px;">
-            <div style="font-size: 26px; font-weight: 800; color: #6366F1; line-height: 1;">${c.total}</div>
-            <div style="font-size: 10px; color: #9CA3AF;">chamados totais</div>
-          </div>
+    // Seções detalhadas (só categorias com análise no período)
+    const secoes = comAnalise.map((c) => `
+      <div style="page-break-inside:avoid;margin-bottom:24px;border:1px solid ${COR.borda};border-radius:10px;overflow:hidden;">
+        <div style="padding:12px 16px;border-bottom:3px solid ${COR.turquesa};display:flex;justify-content:space-between;align-items:baseline;">
+          <div style="font-size:15px;font-weight:700;color:${COR.navy};">${esc(c.name)}</div>
+          <div style="font-size:13px;color:${COR.cinza};"><strong style="font-size:20px;color:${COR.navy};">${c.total}</strong> chamados</div>
         </div>
-        <div style="padding: 16px 18px;">
-          ${subRows}
+        <div style="padding:12px 16px;">
+          ${c.subs.map((sub) => `
+            <div style="padding:10px 0;border-bottom:1px solid ${COR.borda};page-break-inside:avoid;">
+              <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px;">
+                <div style="font-size:13px;font-weight:700;color:${COR.texto};">
+                  <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${priorityColor[sub.prioridade] || "#9CA3AF"};margin-right:6px;"></span>${esc(nomeCurtoSubtipo(sub.nome))}
+                </div>
+                <div style="font-size:12px;color:${COR.cinza};white-space:nowrap;">prioridade ${esc(String(sub.prioridade || "-").toLowerCase())} · <strong style="color:${COR.navy};">${sub.ids.length}</strong></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:11.5px;line-height:1.5;color:${COR.texto};">
+                <div><div style="font-size:9.5px;font-weight:700;color:${COR.cinza};text-transform:uppercase;margin-bottom:2px;">Causa raiz</div>${esc(sub.motivo || "-")}</div>
+                <div><div style="font-size:9.5px;font-weight:700;color:${COR.turquesa};text-transform:uppercase;margin-bottom:2px;">Sugestão de automação</div>${esc(sub.sugestao || "-")}</div>
+              </div>
+              <div style="font-size:10px;color:#9CA3AF;margin-top:5px;">Chamados: ${sub.ids.map(esc).join(", ")}</div>
+            </div>`).join("")}
         </div>
-      </div>`;
-    }).join("");
+      </div>`).join("");
 
-    // Contadores de prioridade somando todos os subtipos de todas as categorias
-    const todosSubtipos = analysedCategories.flatMap((c) => c.analysis.subcategorias);
-    const totalAlta  = todosSubtipos.filter((s) => s.prioridade === "Alta").length;
-    const totalMedia = todosSubtipos.filter((s) => s.prioridade === "Média").length;
-    const totalBaixa = todosSubtipos.filter((s) => s.prioridade === "Baixa").length;
+    const filtrosLabel = [
+      `Sistema: ${esc(sys)}`,
+      `Período: ${esc(periodoLabel)}`,
+      filters.categories.length ? `Categorias: ${filters.categories.map(esc).join(", ")}` : "Todas as categorias",
+      filters.priority ? `Prioridade: ${esc(filters.priority)}` : null,
+    ].filter(Boolean).join(" · ");
 
     const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Relatório SRE — ${sys} — ${geradoEm}</title>
+  <title>Relatório de Reincidência - ${esc(sys)} - ${esc(periodoLabel)}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', sans-serif; background: #fff; color: #111827; padding: 40px; max-width: 900px; margin: 0 auto; }
-    @media print {
-      body { padding: 20px; }
-      .no-print { display: none !important; }
-      @page { margin: 1.5cm; size: A4; }
-    }
+    body { font-family: 'Inter', sans-serif; background: #fff; color: ${COR.texto}; padding: 32px; max-width: 900px; margin: 0 auto; }
+    @media print { body { padding: 0; } .no-print { display: none !important; } @page { margin: 1.5cm; size: A4; }
+      .capa { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
 </head>
 <body>
-
-  <!-- Botão de imprimir (só aparece na tela, não no PDF) -->
-  <div class="no-print" style="margin-bottom: 24px; display: flex; gap: 10px;">
-    <button onclick="window.print()" style="background: #6366F1; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;">
-      Salvar como PDF
-    </button>
-    <button onclick="window.close()" style="background: #F3F4F6; color: #374151; border: none; padding: 10px 20px; border-radius: 8px; font-family: inherit; font-size: 14px; cursor: pointer;">
-      Fechar
-    </button>
+  <div class="no-print" style="margin-bottom:20px;display:flex;gap:10px;">
+    <button onclick="window.print()" style="background:${COR.turquesa};color:#fff;border:none;padding:10px 20px;border-radius:8px;font:600 14px Inter,sans-serif;cursor:pointer;">Salvar como PDF</button>
+    <button onclick="window.close()" style="background:#F3F4F6;color:#374151;border:none;padding:10px 20px;border-radius:8px;font:14px Inter,sans-serif;cursor:pointer;">Fechar</button>
   </div>
 
-  <!-- Cabeçalho do relatório -->
-  <div style="border-bottom: 3px solid #6366F1; padding-bottom: 20px; margin-bottom: 28px;">
-    <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-      <div>
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
-          <div style="width: 32px; height: 32px; background: #6366F1; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 16px;">V</div>
-          <span style="font-size: 11px; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: 0.08em;">Dashboard Reincidência</span>
-        </div>
-        <h1 style="font-size: 24px; font-weight: 800; color: #111827;">Relatório de Análise SRE</h1>
-        <p style="font-size: 14px; color: #6B7280; margin-top: 4px;">Sistema: <strong style="color: #111827;">${sys}</strong> · Gerado em ${geradoEm}</p>
-      </div>
-      <div style="text-align: right;">
-        <div style="font-size: 32px; font-weight: 800; color: #6366F1;">${analysedCategories.length}</div>
-        <div style="font-size: 11px; color: #6B7280;">categorias analisadas</div>
-      </div>
-    </div>
+  <div class="capa" style="background:${COR.navy};color:#fff;border-radius:12px;padding:24px 28px;margin-bottom:24px;">
+    <div style="font-size:22px;font-weight:300;letter-spacing:0.35em;color:${COR.turquesaClaro};margin-bottom:14px;">ZUKK</div>
+    <div style="font-size:24px;font-weight:800;">Relatório de Reincidência</div>
+    <div style="font-size:13px;color:#CBD5E1;margin-top:6px;">${filtrosLabel}</div>
+    <div style="font-size:12px;color:#94A3B8;margin-top:4px;">Gerado em ${geradoEm}</div>
   </div>
 
-  <!-- Resumo executivo -->
-  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 28px;">
-    <div style="background: #FEF2F2; border-radius: 10px; padding: 16px; text-align: center;">
-      <div style="font-size: 28px; font-weight: 800; color: #DC2626;">${totalAlta}</div>
-      <div style="font-size: 11px; font-weight: 600; color: #DC2626; text-transform: uppercase; margin-top: 2px;">Subtipos — Alta</div>
-    </div>
-    <div style="background: #FFFBEB; border-radius: 10px; padding: 16px; text-align: center;">
-      <div style="font-size: 28px; font-weight: 800; color: #D97706;">${totalMedia}</div>
-      <div style="font-size: 11px; font-weight: 600; color: #D97706; text-transform: uppercase; margin-top: 2px;">Subtipos — Média</div>
-    </div>
-    <div style="background: #F0FDF4; border-radius: 10px; padding: 16px; text-align: center;">
-      <div style="font-size: 28px; font-weight: 800; color: #16A34A;">${totalBaixa}</div>
-      <div style="font-size: 11px; font-weight: 600; color: #16A34A; text-transform: uppercase; margin-top: 2px;">Subtipos — Baixa</div>
-    </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px;">
+    ${[["Chamados", totalChamados, COR.navy], ["Categorias", categorias.length, COR.navy],
+       ["Subtipos alta", qtdPrioridade("Alta"), priorityColor.Alta], ["Subtipos média", qtdPrioridade("Média"), priorityColor["Média"]]]
+      .map(([rot, val, cor]) => `<div style="border:1px solid ${COR.borda};border-radius:10px;padding:14px;">
+        <div style="font-size:11px;font-weight:600;color:${COR.cinza};text-transform:uppercase;">${rot}</div>
+        <div style="font-size:26px;font-weight:800;color:${cor};">${val}</div></div>`).join("")}
   </div>
 
-  <!-- Categorias analisadas -->
-  <h2 style="font-size: 14px; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #E5E7EB;">
-    Categorias Analisadas — ordenadas por prioridade
-  </h2>
+  <h2 style="font-size:13px;font-weight:700;color:${COR.navy};text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Resumo por categoria</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:28px;">
+    <thead><tr style="text-align:left;color:${COR.cinza};font-size:11px;text-transform:uppercase;">
+      <th style="padding:6px 10px;border-bottom:2px solid ${COR.turquesa};">Categoria</th>
+      <th style="padding:6px 10px;border-bottom:2px solid ${COR.turquesa};text-align:right;">Chamados</th>
+      <th style="padding:6px 10px;border-bottom:2px solid ${COR.turquesa};">Principal subtipo</th>
+    </tr></thead>
+    <tbody>${linhasResumo}</tbody>
+  </table>
 
-  ${categorySections}
+  ${comAnalise.length ? `<h2 style="font-size:13px;font-weight:700;color:${COR.navy};text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Detalhamento da análise</h2>${secoes}` : ""}
 
-  <!-- Rodapé -->
-  <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #E5E7EB; display: flex; justify-content: space-between; font-size: 11px; color: #9CA3AF;">
-    <span>Dashboard Reincidência · Análise gerada por IA (Claude)</span>
-    <span>Gerado em ${geradoEm}</span>
+  <div style="margin-top:28px;padding-top:12px;border-top:1px solid ${COR.borda};display:flex;justify-content:space-between;font-size:11px;color:#9CA3AF;">
+    <span>Dashboard Reincidência · análise gerada por IA (Claude)</span>
+    <span>${geradoEm}</span>
   </div>
-
 </body>
 </html>`;
 
-    // Abre o relatório em nova aba
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
     const win  = window.open(url, "_blank");
     if (!win) {
       toast({ title: "Pop-up bloqueado", description: "Permita pop-ups para este site e tente novamente.", status: "warning", duration: 5000 });
     }
-    // Libera memória após 60s
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  }, [data, filters.system, analyses, toast]);
+  }, [periodData, periodDays, anchor, filters, analyses, analysesNorm, toast]);
 
   const handleFilterChange = useCallback((key, value) => setFilters((f) => ({ ...f, [key]: value })), []);
   const handleFilterReset  = useCallback(() => setFilters(INITIAL_FILTERS), []);
@@ -2221,23 +2230,22 @@ function DashboardApp() {
     <Box minH="100vh" bg={bg} fontFamily="'Inter', sans-serif">
 
       {/* HEADER */}
-      <Box bg={cardBg} borderBottomWidth="1px" borderColor={border} px="6" py="3" position="sticky" top="0" zIndex="100" shadow="sm">
+      <Box bg="navy.900" color="white" px="6" py="3" position="sticky" top="0" zIndex="100" shadow="md">
         <Flex align="center" justify="space-between" gap="4" wrap="wrap">
           <HStack spacing="3">
-            <Box w="9" h="9" display="flex" alignItems="center" justifyContent="center">
-              <img src={LOGO_Z} alt="Z" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-            </Box>
+            <img src={LOGO_ZUKK} alt="Zukk" style={{ height: "30px", width: "auto" }} />
+            <Box w="1px" h="8" bg="whiteAlpha.300" />
             <Box>
               <Text fontWeight="700" fontSize="lg" lineHeight="1.2">Dashboard Reincidência</Text>
-              <Flex align="center" gap="1.5" mt="0.5" fontSize="12px" color="gray.500" wrap="wrap">
+              <Flex align="center" gap="1.5" mt="0.5" fontSize="12px" color="navy.100" wrap="wrap">
                 {sheetLoading ? (
                   <>
-                    <Spinner size="xs" color="purple.400" />
+                    <Spinner size="xs" color="brand.300" />
                     <Text>Carregando dados…</Text>
                   </>
                 ) : anchor ? (
                   <>
-                    <Box w="6px" h="6px" borderRadius="full" bg="green.400" />
+                    <Box w="6px" h="6px" borderRadius="full" bg="brand.400" />
                     <Text>Chamados até {anchor.toLocaleDateString("pt-BR")}</Text>
                   </>
                 ) : (
@@ -2251,21 +2259,23 @@ function DashboardApp() {
           </HStack>
 
           <HStack spacing="2">
-            <Button size="sm" variant="outline" borderRadius="lg"
+            <Button size="sm" variant="outline" borderRadius="lg" color="white" borderColor="whiteAlpha.500"
+              _hover={{ bg: "whiteAlpha.200" }} _active={{ bg: "whiteAlpha.300" }}
               isLoading={sheetLoading} loadingText="Atualizando"
               onClick={() => loadSheetData()}>
               Atualizar dados
             </Button>
-            <Button size="sm" variant="outline" borderRadius="lg" onClick={downloadReport}>
+            <Button size="sm" variant="outline" borderRadius="lg" color="white" borderColor="whiteAlpha.500"
+              _hover={{ bg: "whiteAlpha.200" }} _active={{ bg: "whiteAlpha.300" }} onClick={downloadReport}>
               Exportar relatório
             </Button>
             <Menu>
-              <MenuButton as={Button} size="sm" colorScheme="purple" borderRadius="lg"
+              <MenuButton as={Button} size="sm" colorScheme="brand" borderRadius="lg"
                 isLoading={bulkLoading || publishing} loadingText={bulkLoading ? "Analisando" : "Publicando"}
                 rightIcon={<IconChevron />}>
                 Ações da IA
               </MenuButton>
-              <MenuList fontSize="sm">
+              <MenuList fontSize="sm" color="gray.800">
                 <MenuItem onClick={() => requestBulkAnalysis(7)}>Analisar categorias sem análise (7 dias)</MenuItem>
                 <MenuItem onClick={() => requestBulkAnalysis(30)}>Analisar categorias sem análise (30 dias)</MenuItem>
                 {failedCats.length > 0 && (
@@ -2295,7 +2305,7 @@ function DashboardApp() {
               </MenuList>
             </Menu>
             {ACCESS_PASSWORD && (
-              <Button size="sm" variant="ghost" borderRadius="lg"
+              <Button size="sm" variant="ghost" borderRadius="lg" color="white" _hover={{ bg: "whiteAlpha.200" }}
                 onClick={() => {
                   try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (_) { /* ignora */ }
                   window.location.reload();
@@ -2339,13 +2349,13 @@ function DashboardApp() {
         />
 
         <SimpleGrid columns={{ base: 2, md: 4 }} spacing="4" mb="6">
-          <StatCard label={periodDays >= 9999 ? "Chamados (todo o histórico)" : `Chamados (${periodDays} dias)`} value={totalTickets.toLocaleString("pt-BR")} color="purple" />
-          <StatCard label="Últimos 30 dias" value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="blue" />
-          <StatCard label="Categorias" value={filteredCards.length} color="teal" />
-          <StatCard label="Com análise da IA" value={`${analysedCount} de ${filteredCards.length}`} color="orange" />
+          <StatCard label={periodDays >= 9999 ? "Chamados (todo o histórico)" : `Chamados (${periodDays} dias)`} value={totalTickets.toLocaleString("pt-BR")} color="navy" />
+          <StatCard label="Últimos 30 dias" value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="brand" />
+          <StatCard label="Categorias" value={filteredCards.length} color="navy" />
+          <StatCard label="Com análise da IA" value={`${analysedCount} de ${filteredCards.length}`} color="navy" />
         </SimpleGrid>
 
-        <Tabs colorScheme="purple" variant="soft-rounded" defaultIndex={1} isLazy>
+        <Tabs colorScheme="brand" variant="soft-rounded" defaultIndex={1} isLazy>
           <TabList mb="5" bg={cardBg} p="1" borderRadius="xl" borderWidth="1px" borderColor={border} gap="1">
             <Tab fontSize="sm" borderRadius="lg">Visão geral</Tab>
             <Tab fontSize="sm" borderRadius="lg">Chamados por categoria</Tab>
@@ -2458,13 +2468,13 @@ function LoginScreen({ onLogin }) {
   }
 
   return (
-    <Box minH="100vh" bg={bg} display="flex" alignItems="center" justifyContent="center" fontFamily="'Inter', sans-serif" px="4">
+    <Box minH="100vh" bg="navy.900" display="flex" alignItems="center" justifyContent="center" fontFamily="'Inter', sans-serif" px="4">
       <Card bg={cardBg} borderWidth="1px" borderColor={border} borderRadius="2xl" shadow="lg" maxW="380px" w="full">
         <CardBody p="8">
           <VStack spacing="5" align="stretch">
             <VStack spacing="2">
-              <Box w="16" h="16" display="flex" alignItems="center" justifyContent="center">
-                <img src={LOGO_Z} alt="Z" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+              <Box bg="navy.900" borderRadius="lg" px="5" py="3">
+                <img src={LOGO_ZUKK} alt="Zukk" style={{ height: "36px", width: "auto" }} />
               </Box>
               <Heading size="md" textAlign="center">Dashboard Reincidência</Heading>
               <Text fontSize="sm" color="gray.500" textAlign="center">
@@ -2491,7 +2501,7 @@ function LoginScreen({ onLogin }) {
               )}
             </Box>
 
-            <Button colorScheme="purple" borderRadius="lg" onClick={tentarLogin} w="full">
+            <Button colorScheme="brand" borderRadius="lg" onClick={tentarLogin} w="full">
               Entrar
             </Button>
           </VStack>
