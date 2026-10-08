@@ -352,15 +352,40 @@ export function parseDate(raw) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// ── Filtro por executor ────────────────────────────────────────────────────────
+// A planilha do Fly tem a coluna "chamado_executor" (Zukk, Vivo, Minsait, Nenhum ou
+// vazio). Só os chamados executados pela Zukk entram no site e na análise da IA:
+// os demais são descartados ANTES de qualquer contagem ou classificação.
+// Planilhas sem essa coluna (formato antigo, Valoriza) passam sem filtro.
+export const EXECUTOR_ACEITO = "zukk";
+
+// Posição de uma coluna pelo nome do cabeçalho (ignora maiúsculas, acentos e "_")
+export function indiceColuna(cabecalho, nome) {
+  const alvo = normText(nome);
+  return (cabecalho || []).findIndex((h) => normText(h) === alvo);
+}
+
+/**
+ * Recebe TODAS as linhas da planilha (com o cabeçalho na primeira) e devolve
+ * { cabecalho, rows, ignorados } — rows já sem cabeçalho e só com executor Zukk.
+ */
+export function filtrarPorExecutor(values) {
+  const [cabecalho = [], ...rows] = values || [];
+  const col = indiceColuna(cabecalho, "chamado_executor");
+  if (col === -1) return { cabecalho, rows, ignorados: 0 };
+  const aceitos = rows.filter((r) => normText(r[col]) === EXECUTOR_ACEITO);
+  return { cabecalho, rows: aceitos, ignorados: rows.length - aceitos.length };
+}
+
 /**
  * Classifica TODAS as linhas da planilha, na ordem em que aparecem.
  * O site e o script chamam esta mesma função, então o resultado é idêntico.
  *
- * @param rows  linhas da planilha SEM o cabeçalho (arrays de células)
- * @param opts  { mode, colDate, colComment, colId }
- * @returns     [{ id, date, category, description }]
+ * @param rows  linhas da planilha SEM o cabeçalho (use filtrarPorExecutor antes)
+ * @param opts  { mode, colDate, colComment, colId, colTitulo?, colPedido? }
+ * @returns     [{ id, date, category, description, titulo, pedido }]
  */
-export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, colId }) {
+export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, colId, colTitulo = -1, colPedido = -1 }) {
   const registro = criarRegistro();
   const tickets = [];
   rows.forEach((row, idx) => {
@@ -373,6 +398,9 @@ export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, col
       date,
       category:    classificarComentario(comentario, mode, registro),
       description: comentario,
+      // O que o usuário pediu ao abrir o chamado (quando a planilha traz essas colunas)
+      titulo:      colTitulo >= 0 ? String(row[colTitulo] || "").trim() : "",
+      pedido:      colPedido >= 0 ? String(row[colPedido] || "").trim() : "",
     });
   });
   return tickets;

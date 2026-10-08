@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
 import {
-  classificarLinhas, getCategoryDescription, normCatKey,
+  classificarLinhas, getCategoryDescription, normCatKey, filtrarPorExecutor, indiceColuna,
 } from "./classificacao.js";
 import Painel from "./Painel.jsx";
 
@@ -306,11 +306,15 @@ async function fetchSheetData(mode) {
     throw new Error(err?.error?.message || `HTTP ${res.status}`);
   }
   const json = await res.json();
-  const rows = (json.values || []).slice(1);
+  // Remove o cabeçalho e descarta chamados que não são da Zukk (executor Vivo,
+  // Minsait, Nenhum ou vazio): não entram em nenhuma contagem, gráfico ou análise.
+  const { cabecalho, rows } = filtrarPorExecutor(json.values || []);
 
   const sistema = cfg.systems[0];
   const tickets = classificarLinhas(rows, {
     mode, colDate: cfg.colDate, colComment: cfg.colComment, colId: cfg.colId,
+    colTitulo: indiceColuna(cabecalho, "chamado_titulo"),
+    colPedido: indiceColuna(cabecalho, "chamado_descricao"),
   });
 
   const data = { [sistema]: {} };
@@ -1416,11 +1420,20 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                     <Td px="2" fontSize="11px">
                       {expandedTicket === rowKey ? (
                         <Box>
+                          {(t.titulo || t.pedido) && (
+                            <Box mb="2" p="2" bg={statBg} borderRadius="md">
+                              <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase">Pedido do usuário</Text>
+                              {t.titulo && <Text fontWeight="600">{t.titulo}</Text>}
+                              {t.pedido && <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.pedido}</Text>}
+                            </Box>
+                          )}
+                          <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase">Encerramento</Text>
                           <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.description}</Text>
                           <Text fontSize="10px" color="brand.400" mt="1">Clique para recolher</Text>
                         </Box>
                       ) : (
                         <Box>
+                          {t.titulo && <Text fontWeight="600" noOfLines={1}>{t.titulo}</Text>}
                           <Text noOfLines={2} color={textColor}>{t.description}</Text>
                           {t.description.length > 100 && (
                             <Text fontSize="10px" color="brand.400" mt="0.5">Clique para expandir</Text>
