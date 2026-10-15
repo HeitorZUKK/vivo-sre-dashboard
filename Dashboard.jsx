@@ -1178,7 +1178,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
       pct:        Math.round(((s.ids || []).length / total) * 100),
       fromIA:     true,
     })).sort((a, b) => b.count - a.count);
-  }, [analysis]);
+  }, [subsPeriodo]);
 
   const subgruposTexto = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
   const subgrupos = subgruposIA || subgruposTexto;
