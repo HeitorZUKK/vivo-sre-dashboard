@@ -93,6 +93,16 @@ const BATCH_DELAY_MS = 2_500;  // pausa entre requisições (ms) — respeita ra
 const MAX_RETRIES    = 3;      // tentativas em caso de erro 429/503
 const RETRY_DELAY_MS = 15_000; // espera base entre tentativas (ms)
 
+// Subtipos da análise da IA restritos aos chamados do período: os IDs fora do
+// período saem da contagem e o subtipo que fica sem chamados não aparece.
+function subtiposNoPeriodo(subcategorias, tickets) {
+  if (!subcategorias?.length) return [];
+  const idsNoPeriodo = new Set((tickets || []).map((t) => String(t.id).replace("#", "")));
+  return subcategorias
+    .map((s) => ({ ...s, ids: (s.ids || []).map((id) => String(id).replace("#", "")).filter((id) => idsNoPeriodo.has(id)) }))
+    .filter((s) => s.ids.length > 0);
+}
+
 // Paginação da tabela de chamados no modal
 const TICKETS_PER_PAGE = 50;
 
@@ -1146,12 +1156,19 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   const [ticketPage, setTicketPage]         = useState(0);
   const [selectedSubgroup, setSelectedSubgroup] = useState(null); // filtra tabela por subgrupo
 
+  // Subtipos da IA restritos ao período selecionado: cada subtipo conta só os
+  // chamados que estão no período, e o subtipo sem nenhum chamado no período some.
+  const subsPeriodo = useMemo(
+    () => subtiposNoPeriodo(analysis?.subcategorias, categoryData.tickets),
+    [analysis, categoryData.tickets]
+  );
+
   // Subgrupos da IA (se a análise os gerou) têm prioridade sobre a dedução por texto.
   // Formato IA: [{ nome, descricao, ids }]. Convertidos para o formato de exibição.
   const subgruposIA = useMemo(() => {
-    if (!analysis?.subcategorias?.length) return null;
-    const total = analysis.subcategorias.reduce((acc, s) => acc + (s.ids?.length || 0), 0) || 1;
-    return analysis.subcategorias.map((s) => ({
+    if (!subsPeriodo.length) return null;
+    const total = subsPeriodo.reduce((acc, s) => acc + (s.ids?.length || 0), 0) || 1;
+    return subsPeriodo.map((s) => ({
       label:      s.nome,
       desc:       s.descricao || null,
       motivo:     s.motivo || null,
@@ -1168,27 +1185,30 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   const subgrupos = subgruposIA || subgruposTexto;
   const descricao = getCategoryDescription(categoryName);
 
-  // Tickets filtrados pelo subgrupo selecionado (se houver).
-  // Subgrupo da IA filtra por lista de IDs contra o HISTÓRICO COMPLETO (fullTickets),
-  // pois a análise pode ter usado uma janela (7/30d) diferente do período do filtro.
+  // Tickets do período filtrados pelo subgrupo selecionado (se houver).
   const visibleTickets = useMemo(() => {
     if (!selectedSubgroup) return categoryData.tickets;
     const sg = subgrupos.find((s) => s.label === selectedSubgroup);
-    const base = fullTickets || categoryData.tickets;
     if (sg?.fromIA) {
       const idSet = new Set(sg.ids);
-      return base.filter((t) => idSet.has(t.id.replace("#", "")));
+      return categoryData.tickets.filter((t) => idSet.has(t.id.replace("#", "")));
     }
     return categoryData.tickets.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
-  }, [categoryData.tickets, fullTickets, selectedSubgroup, subgrupos]);
+  }, [categoryData.tickets, selectedSubgroup, subgrupos]);
 
-  // Base da tabela quando há subtipo selecionado: subtipo da IA usa o histórico
-  // completo (os IDs vêm da janela da análise); subtipo automático usa o período.
-  const baseFiltro = selectedSubgroup && subgrupos.find((s) => s.label === selectedSubgroup)?.fromIA
-    ? (fullTickets || categoryData.tickets)
-    : categoryData.tickets;
-  // A tendência acompanha o subtipo selecionado
-  const trend            = getMonthlyTrend(selectedSubgroup ? visibleTickets : (fullTickets || categoryData.tickets));
+  // A tendência acompanha o subtipo selecionado (no histórico completo)
+  const trendTickets = useMemo(() => {
+    const base = fullTickets || categoryData.tickets;
+    if (!selectedSubgroup) return base;
+    const sg = subgrupos.find((s) => s.label === selectedSubgroup);
+    if (sg?.fromIA) {
+      const original = (analysis?.subcategorias || []).find((s) => s.nome === sg.label);
+      const idSet = new Set((original?.ids || sg.ids).map((id) => String(id).replace("#", "")));
+      return base.filter((t) => idSet.has(t.id.replace("#", "")));
+    }
+    return base.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
+  }, [fullTickets, categoryData.tickets, selectedSubgroup, subgrupos, analysis]);
+  const trend            = getMonthlyTrend(trendTickets);
   const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
   const paginatedTickets = visibleTickets.slice(
     ticketPage * TICKETS_PER_PAGE,
@@ -1208,10 +1228,8 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   }, [anchor, periodDays, fullTickets, categoryData.tickets]);
 
   const subsOrdenados = useMemo(() => (
-    analysis?.subcategorias?.length
-      ? [...analysis.subcategorias].sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0))
-      : []
-  ), [analysis]);
+    [...subsPeriodo].sort((a, b) => (b.ids?.length || 0) - (a.ids?.length || 0))
+  ), [subsPeriodo]);
 
   return (
     <Card bg={bg} borderWidth="1px" borderColor={borderColor} borderRadius="xl" shadow="sm"
@@ -1379,7 +1397,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
             <Flex justify="space-between" align="center" mb="3">
               <Text fontWeight="600" fontSize="sm">
-                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${baseFiltro.length}` : ""})
+                Chamados ({visibleTickets.length}{selectedSubgroup ? ` de ${categoryData.tickets.length}` : ""})
               </Text>
               {totalPages > 1 && (
                 <HStack spacing="1">
@@ -1737,7 +1755,7 @@ function DashboardApp() {
         const analysis = analyses[key] || analysesNorm[`${sys}::${normCatKey(cat)}`];
         if (filters.priority) {
           const temPrioridade = analysis?.prioridade === filters.priority ||
-            (analysis?.subcategorias || []).some((sub) => sub.prioridade === filters.priority);
+            subtiposNoPeriodo(analysis?.subcategorias, val.tickets).some((sub) => sub.prioridade === filters.priority);
           if (!temPrioridade) return;
         }
         // fullVal = histórico completo da categoria (do `data`, não do periodData filtrado).
