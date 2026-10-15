@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
 import {
-  classificarLinhas, getCategoryDescription, normCatKey, filtrarPorExecutor, indiceColuna,
+  classificarLinhas, getCategoryDescription, normCatKey, filtrarPorExecutor, indiceColuna, subtiposUnicos,
 } from "./classificacao.js";
 import Painel from "./Painel.jsx";
 
@@ -95,12 +95,11 @@ const RETRY_DELAY_MS = 15_000; // espera base entre tentativas (ms)
 
 // Subtipos da análise da IA restritos aos chamados do período: os IDs fora do
 // período saem da contagem e o subtipo que fica sem chamados não aparece.
+// Cada chamado conta em um único subtipo.
 function subtiposNoPeriodo(subcategorias, tickets) {
   if (!subcategorias?.length) return [];
-  const idsNoPeriodo = new Set((tickets || []).map((t) => String(t.id).replace("#", "")));
-  return subcategorias
-    .map((s) => ({ ...s, ids: (s.ids || []).map((id) => String(id).replace("#", "")).filter((id) => idsNoPeriodo.has(id)) }))
-    .filter((s) => s.ids.length > 0);
+  const idsNoPeriodo = new Set((tickets || []).map((t) => String(t.id).replace("#", "").trim()));
+  return subtiposUnicos(subcategorias, idsNoPeriodo);
 }
 
 // Paginação da tabela de chamados no modal
@@ -2058,15 +2057,8 @@ function DashboardApp() {
     // Monta cada categoria: subtipos da IA contam só os chamados DENTRO do período
     const categorias = nomes.map((name) => {
       const tickets  = catsPeriodo[name].tickets;
-      const idsNoPeriodo = new Set(tickets.map((t) => String(t.id).replace("#", "")));
       const analysis = analyses[`${sys}::${name}`] || analysesNorm[`${sys}::${normCatKey(name)}`] || null;
-      let subs = (analysis?.subcategorias || [])
-        .map((sub) => {
-          const ids = (sub.ids || []).map((id) => String(id).replace("#", "")).filter((id) => idsNoPeriodo.has(id));
-          return { ...sub, ids };
-        })
-        .filter((sub) => sub.ids.length > 0)
-        .sort((a, b) => b.ids.length - a.ids.length);
+      let subs = subtiposNoPeriodo(analysis?.subcategorias, tickets);
       if (filters.priority) subs = subs.filter((sub) => sub.prioridade === filters.priority);
       return { name, total: tickets.length, subs };
     })
