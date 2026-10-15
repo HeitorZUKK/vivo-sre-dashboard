@@ -365,16 +365,42 @@ export function indiceColuna(cabecalho, nome) {
   return (cabecalho || []).findIndex((h) => normText(h) === alvo);
 }
 
+// Chamados que ficam com executor Zukk no ITSM, mas que a Zukk só recebe e
+// ENCAMINHA para outro time (ex.: desvínculo de ID Master, tratado pelo time do
+// Bertelli). Se QUALQUER comentário do chamado tiver um destes trechos, o
+// chamado inteiro é ignorado — igual a um chamado com executor Vivo.
+// Para incluir outro time/serviço, basta acrescentar um trecho aqui.
+// (Maiúsculas, acentos e palavras como "do"/"da" não importam.)
+export const ENCAMINHADO_PARA_OUTRO_TIME = [
+  "time do Bertelli",
+  "equipe do Bertelli",
+];
+
 /**
  * Recebe TODAS as linhas da planilha (com o cabeçalho na primeira) e devolve
- * { cabecalho, rows, ignorados } — rows já sem cabeçalho e só com executor Zukk.
+ * { cabecalho, rows, ignorados, encaminhados } — rows já sem cabeçalho, só com
+ * executor Zukk e sem os chamados encaminhados para outro time.
  */
 export function filtrarPorExecutor(values) {
-  const [cabecalho = [], ...rows] = values || [];
-  const col = indiceColuna(cabecalho, "chamado_executor");
-  if (col === -1) return { cabecalho, rows, ignorados: 0 };
-  const aceitos = rows.filter((r) => normText(r[col]) === EXECUTOR_ACEITO);
-  return { cabecalho, rows: aceitos, ignorados: rows.length - aceitos.length };
+  const [cabecalho = [], ...todas] = values || [];
+  const colExec = indiceColuna(cabecalho, "chamado_executor");
+  let rows = colExec === -1 ? todas : todas.filter((r) => normText(r[colExec]) === EXECUTOR_ACEITO);
+  const ignoradosExecutor = todas.length - rows.length;
+
+  const colId = indiceColuna(cabecalho, "chamado_id");
+  const colCom = indiceColuna(cabecalho, "comentario");
+  const trechos = ENCAMINHADO_PARA_OUTRO_TIME.map(normText).filter(Boolean);
+  let encaminhados = 0;
+  if (colId !== -1 && colCom !== -1 && trechos.length) {
+    const idsFora = new Set(
+      rows
+        .filter((r) => { const t = normText(r[colCom]); return trechos.some((p) => t.includes(p)); })
+        .map((r) => String(r[colId]).trim())
+    );
+    encaminhados = idsFora.size;
+    if (encaminhados) rows = rows.filter((r) => !idsFora.has(String(r[colId]).trim()));
+  }
+  return { cabecalho, rows, ignorados: todas.length - rows.length, ignoradosExecutor, encaminhados };
 }
 
 /**
