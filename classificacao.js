@@ -404,6 +404,28 @@ export function filtrarPorExecutor(values) {
 }
 
 /**
+ * Subtipos da análise da IA com cada chamado em UM único subtipo.
+ * Um chamado com vários comentários podia cair em mais de um subtipo; aqui ele
+ * fica só no subtipo maior (o primeiro em que aparece, do maior para o menor).
+ * Se `idsPermitidos` (Set) for passado, descarta IDs fora dele (ex.: fora do
+ * período). Subtipos que ficam sem chamados são removidos.
+ */
+export function subtiposUnicos(subcategorias, idsPermitidos = null) {
+  const limpa = (id) => String(id).replace("#", "").trim();
+  const usados = new Set();
+  return [...(subcategorias || [])]
+    .map((s) => ({ ...s, ids: [...new Set((s.ids || []).map(limpa))] }))
+    .sort((a, b) => b.ids.length - a.ids.length)
+    .map((s) => {
+      const ids = s.ids.filter((id) => !usados.has(id) && (!idsPermitidos || idsPermitidos.has(id)));
+      ids.forEach((id) => usados.add(id));
+      return { ...s, ids };
+    })
+    .filter((s) => s.ids.length > 0)
+    .sort((a, b) => b.ids.length - a.ids.length);
+}
+
+/**
  * Classifica TODAS as linhas da planilha, na ordem em que aparecem.
  * O site e o script chamam esta mesma função, então o resultado é idêntico.
  *

@@ -16,6 +16,7 @@ import {
   Box, Flex, Text, Button, HStack, VStack, Select, Spinner, SimpleGrid,
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
+import { subtiposUnicos } from "./classificacao.js";
 
 const ATUALIZAR_A_CADA_MS = 5 * 60 * 1000;  // recarrega a planilha a cada 5 min
 const PRIORIDADE_ORDEM = { Alta: 0, "Média": 1, Baixa: 2 };
@@ -91,7 +92,7 @@ function montarSlides(modo, dados) {
   const subtipos = [];
   categorias.forEach(([cat]) => {
     const an = analisePorCategoria(cat);
-    (an?.subcategorias || []).forEach((s) => subtipos.push({
+    subtiposUnicos(an?.subcategorias).forEach((s) => subtipos.push({
       nome: nomeCurto(s.nome), categoria: cat, prioridade: s.prioridade,
       qtd: s.ids?.length || 0, sugestao: s.sugestao || "",
     }));
