@@ -268,6 +268,7 @@ export const CATEGORY_DESCRIPTIONS = {
   "RELATÓRIO":               "Mudança de dados de processo na base.",
   "VALOR FCU":               "Inserção ou mudança de valores de FCU.",
   "SCI":                     "Qualquer mudança ou inserção de dados na SCI.",
+  "SCI/FCU":                 "SCI e FCU: abertura, valores, cancelamento, stage, detentora e demais dados.",
   "CARACTERE ESPECIAL":      "Erro [object Object] por caractere especial ou quebra de linha.",
   "EMPRESA DUPLICADA":       "Empresa duplicada no VivoGo (unique query result).",
   "PERMISSÃO/BOTÃO":         "Botão não aparece ou usuário sem permissão.",
@@ -382,6 +383,24 @@ export function normalizarCategoria(categoriaRaw, mode, registro) {
   return canonical;
 }
 
+// Categorias que aparecem juntas no site e na análise (a IA separa em subtipos).
+// As regras e tags continuam reconhecendo cada assunto; aqui só se junta o card.
+export const CATEGORIAS_UNIFICADAS = {
+  Fly: {
+    "SCI":          "SCI/FCU",
+    "VALOR FCU":    "SCI/FCU",
+    "CANCELAR FCU": "SCI/FCU",
+    "STAGE SCI":    "SCI/FCU",
+    "DETENTORA":    "SCI/FCU",
+    "E-MAIL":       "SCI/FCU",
+  },
+};
+
+function unificar(categoria, mode) {
+  const mapa = CATEGORIAS_UNIFICADAS[mode === "Atlas" ? "Fly" : mode] || {};
+  return mapa[categoria] || categoria;
+}
+
 export function criarRegistro() {
   return [];
 }
@@ -392,6 +411,10 @@ export function criarRegistro() {
  * `contexto` = { titulo, pedido } do chamado, usado quando o comentário não basta.
  */
 export function classificarComentario(texto, mode, registro, contexto = {}) {
+  return unificar(classificarSemUnificar(texto, mode, registro, contexto), mode);
+}
+
+function classificarSemUnificar(texto, mode, registro, contexto = {}) {
   const cfg = CLASSIFIER_CONFIG[mode] || CLASSIFIER_CONFIG.Fly;
   const rules = cfg.rules || CLASSIFIER_CONFIG.Fly.rules;
 
