@@ -210,6 +210,12 @@ function SlideAtacar({ slide, grande, T }) {
   );
 }
 
+// Primeiro e último nome de quem encerrou
+function nomeAutor(nome) {
+  const p = String(nome || "").trim().split(/\s+/).filter(Boolean);
+  return p.length <= 2 ? p.join(" ") : `${p[0]} ${p[p.length - 1]}`;
+}
+
 function SlideRecentes({ slide, grande, T }) {
   return (
     <VStack align="stretch" spacing="0">
@@ -226,6 +232,11 @@ function SlideRecentes({ slide, grande, T }) {
             {t.category}
           </Text>
           <Text fontSize={grande ? "xl" : "sm"} noOfLines={1} flex="1">{resumoChamado(t.description)}</Text>
+          {t.autor && (
+            <Text fontSize={grande ? "lg" : "xs"} color={T.muted} w={grande ? "220px" : "120px"} flexShrink={0} noOfLines={1} textAlign="right">
+              {nomeAutor(t.autor)}
+            </Text>
+          )}
         </Flex>
       ))}
     </VStack>

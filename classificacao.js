@@ -555,11 +555,11 @@ export function subtiposUnicos(subcategorias, idsPermitidos = null) {
  *
  * @param rows  linhas da planilha SEM o cabeçalho (use filtrarPorExecutor antes)
  * @param opts  { mode, colDate, colComment, colId, colTitulo?, colPedido? }
- * @returns     [{ id, date, category, description, titulo, pedido }]
+ * @returns     [{ id, date, category, description, titulo, pedido, autor }]
  */
 const idReal = (t) => !String(t.id).startsWith("#");
 
-export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, colId, colTitulo = -1, colPedido = -1 }) {
+export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, colId, colTitulo = -1, colPedido = -1, colAutor = -1 }) {
   const registro = criarRegistro();
   const tickets = [];
   rows.forEach((row, idx) => {
@@ -577,6 +577,8 @@ export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, col
       description: comentario,
       titulo,
       pedido,
+      // Quem escreveu o comentário (coluna comentario_autor, quando existir)
+      autor:       colAutor >= 0 ? String(row[colAutor] || "").trim() : "",
     });
   });
 
