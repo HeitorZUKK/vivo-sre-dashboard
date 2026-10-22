@@ -333,12 +333,32 @@ async function fetchSheetData(mode) {
     colAutor:  indiceColuna(cabecalho, "comentario_autor"),
   });
 
-  const data = { [sistema]: {} };
+  // A planilha tem uma linha por COMENTÁRIO. Agrupa por chamado para que cada
+  // chamado conte uma vez só (cards, gráficos, períodos, tabela). O chamado fica
+  // com a data, o texto e o autor do comentário mais recente, e guarda todos os
+  // comentários em `comentarios` (do mais recente para o mais antigo).
+  const porChamado = new Map();
   tickets.forEach((t) => {
-    const ticket = { ...t, system: sistema, detalhe: extrairDetalhe(t.description) };
-    if (!data[sistema][t.category]) data[sistema][t.category] = { tickets: [] };
-    data[sistema][t.category].tickets.push(ticket);
+    const chave = `${t.category}::${t.id}`;
+    if (!porChamado.has(chave)) porChamado.set(chave, []);
+    porChamado.get(chave).push(t);
   });
+
+  const data = { [sistema]: {} };
+  porChamado.forEach((comentarios) => {
+    comentarios.sort((a, b) => b.date - a.date);
+    const recente = comentarios[0];
+    const detalhe = comentarios.map((c) => extrairDetalhe(c.description)).find(Boolean) || null;
+    const ticket = {
+      ...recente,
+      system: sistema,
+      detalhe,
+      comentarios: comentarios.map(({ date, description, autor }) => ({ date, description, autor })),
+    };
+    if (!data[sistema][recente.category]) data[sistema][recente.category] = { tickets: [] };
+    data[sistema][recente.category].tickets.push(ticket);
+  });
+  Object.values(data[sistema]).forEach((c) => c.tickets.sort((a, b) => b.date - a.date));
   return data;
 }
 
@@ -1173,8 +1193,18 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
   // Formato IA: [{ nome, descricao, ids }]. Convertidos para o formato de exibição.
   const subgruposIA = useMemo(() => {
     if (!subsPeriodo.length) return null;
-    const total = subsPeriodo.reduce((acc, s) => acc + (s.ids?.length || 0), 0) || 1;
-    return subsPeriodo.map((s) => ({
+    // Percentual sobre TODOS os chamados do período, inclusive os que a IA não analisou
+    const idsPeriodo = [...new Set(categoryData.tickets.map((t) => String(t.id).replace("#", "").trim()))];
+    const analisados = new Set(subsPeriodo.flatMap((s) => s.ids || []));
+    const semAnalise = idsPeriodo.filter((id) => !analisados.has(id));
+    const total = idsPeriodo.length || 1;
+    const extra = semAnalise.length ? [{
+      nome: "Ainda sem análise da IA",
+      descricao: "Chamados que entraram depois da última análise. Rode a análise de novo para agrupá-los.",
+      ids: semAnalise,
+      semAnalise: true,
+    }] : [];
+    return [...subsPeriodo, ...extra].map((s) => ({
       label:      s.nome,
       desc:       s.descricao || null,
       motivo:     s.motivo || null,
@@ -1184,8 +1214,9 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
       count:      (s.ids || []).length,
       pct:        Math.round(((s.ids || []).length / total) * 100),
       fromIA:     true,
-    })).sort((a, b) => b.count - a.count);
-  }, [subsPeriodo]);
+      semAnalise: !!s.semAnalise,
+    })).sort((a, b) => (a.semAnalise - b.semAnalise) || (b.count - a.count));
+  }, [subsPeriodo, categoryData.tickets]);
 
   const subgruposTexto = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
   const subgrupos = subgruposIA || subgruposTexto;
@@ -1374,7 +1405,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                           </VStack>
                         )}
                         {/* Subtipo por texto (sem IA) mostra só a descrição curta */}
-                        {!sg.fromIA && sg.desc && (
+                        {(!sg.fromIA || (sg.semAnalise && isActive)) && sg.desc && (
                           <Text fontSize="11px" color="gray.500" mt="1" lineHeight="1.4">{sg.desc}</Text>
                         )}
                       </Box>
@@ -1455,18 +1486,24 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                               {t.pedido && <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.pedido}</Text>}
                             </Box>
                           )}
-                          <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase">
-                            Encerramento{t.autor ? ` · ${t.autor}` : ""}
-                          </Text>
-                          <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.description}</Text>
+                          {(t.comentarios || [t]).map((c, ci) => (
+                            <Box key={ci} mb="2">
+                              <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase">
+                                {ci === 0 ? "Último comentário" : "Comentário"} · {c.date.toLocaleDateString("pt-BR")}{c.autor ? ` · ${c.autor}` : ""}
+                              </Text>
+                              <Text whiteSpace="pre-wrap" lineHeight="1.5">{c.description}</Text>
+                            </Box>
+                          ))}
                           <Text fontSize="10px" color="brand.400" mt="1">Clique para recolher</Text>
                         </Box>
                       ) : (
                         <Box>
                           {t.titulo && <Text fontWeight="600" noOfLines={1}>{t.titulo}</Text>}
                           <Text noOfLines={2} color={textColor}>{t.description}</Text>
-                          {t.description.length > 100 && (
-                            <Text fontSize="10px" color="brand.400" mt="0.5">Clique para expandir</Text>
+                          {(t.description.length > 100 || (t.comentarios?.length || 0) > 1) && (
+                            <Text fontSize="10px" color="brand.400" mt="0.5">
+                              {(t.comentarios?.length || 0) > 1 ? `Clique para ver os ${t.comentarios.length} comentários` : "Clique para expandir"}
+                            </Text>
                           )}
                         </Box>
                       )}
