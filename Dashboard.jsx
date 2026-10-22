@@ -93,6 +93,12 @@ const BATCH_DELAY_MS = 2_500;  // pausa entre requisições (ms) — respeita ra
 const MAX_RETRIES    = 3;      // tentativas em caso de erro 429/503
 const RETRY_DELAY_MS = 15_000; // espera base entre tentativas (ms)
 
+// "Ian Siqueira Faray De Aquino" -> "Ian Aquino" (primeiro e último nome)
+function nomeCurto(nome) {
+  const partes = String(nome || "").trim().split(/\s+/).filter(Boolean);
+  return partes.length <= 2 ? partes.join(" ") : `${partes[0]} ${partes[partes.length - 1]}`;
+}
+
 // Subtipos da análise da IA restritos aos chamados do período: os IDs fora do
 // período saem da contagem e o subtipo que fica sem chamados não aparece.
 // Cada chamado conta em um único subtipo.
@@ -324,6 +330,7 @@ async function fetchSheetData(mode) {
     mode, colDate: cfg.colDate, colComment: cfg.colComment, colId: cfg.colId,
     colTitulo: indiceColuna(cabecalho, "chamado_titulo"),
     colPedido: indiceColuna(cabecalho, "chamado_descricao"),
+    colAutor:  indiceColuna(cabecalho, "comentario_autor"),
   });
 
   const data = { [sistema]: {} };
@@ -1415,6 +1422,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                   <Th w="90px"  whiteSpace="nowrap" px="2">ID</Th>
                   <Th w="85px"  whiteSpace="nowrap" px="2">Data</Th>
                   <Th w="100px" whiteSpace="nowrap" px="2">Detalhe</Th>
+                  <Th w="110px" whiteSpace="nowrap" px="2">Encerrado por</Th>
                   <Th whiteSpace="nowrap" px="2">Descrição</Th>
                 </Tr>
               </Thead>
@@ -1434,6 +1442,9 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                         </Badge>
                       )}
                     </Td>
+                    <Td px="2" fontSize="11px" color={textColor}>
+                      <Text whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis" title={t.autor}>{nomeCurto(t.autor) || "—"}</Text>
+                    </Td>
                     <Td px="2" fontSize="11px">
                       {expandedTicket === rowKey ? (
                         <Box>
@@ -1444,7 +1455,9 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                               {t.pedido && <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.pedido}</Text>}
                             </Box>
                           )}
-                          <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase">Encerramento</Text>
+                          <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase">
+                            Encerramento{t.autor ? ` · ${t.autor}` : ""}
+                          </Text>
                           <Text whiteSpace="pre-wrap" lineHeight="1.5">{t.description}</Text>
                           <Text fontSize="10px" color="brand.400" mt="1">Clique para recolher</Text>
                         </Box>
