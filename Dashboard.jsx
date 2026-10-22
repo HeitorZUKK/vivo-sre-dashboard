@@ -1422,7 +1422,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
                   <Th w="90px"  whiteSpace="nowrap" px="2">ID</Th>
                   <Th w="85px"  whiteSpace="nowrap" px="2">Data</Th>
                   <Th w="100px" whiteSpace="nowrap" px="2">Detalhe</Th>
-                  <Th w="110px" whiteSpace="nowrap" px="2">Encerrado por</Th>
+                  <Th w="120px" whiteSpace="nowrap" px="2">Encerrou</Th>
                   <Th whiteSpace="nowrap" px="2">Descrição</Th>
                 </Tr>
               </Thead>
