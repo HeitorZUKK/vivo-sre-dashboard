@@ -18,19 +18,64 @@ export const SEM_CATEGORIA = "SEM CATEGORIA";
 
 // ── Regras por palavra-chave (usadas só quando NÃO há tag "CATEGORIA:") ─────────
 // A ordem importa: a primeira regra que bater vence.
+// Fly: quando o comentário não tem a tag "CATEGORIA:", as regras são testadas
+//   0) regras de CAUSA técnica (causa: true) no comentário de encerramento —
+//      ex.: o título diz "falha ao abrir SCI", mas o analista achou a altitude;
+//   1) no título e na descrição do chamado (o problema que o usuário relatou);
+//   2) no comentário de encerramento (quando o título não diz o assunto);
+//   3) regras genéricas por módulo (SCI/FCU, SOI, candidato);
+//   4) encerrado sem retorno do solicitante;
+// e só então o chamado fica SEM CATEGORIA. A palavra-chave casa com PALAVRAS
+// inteiras (e o plural), sem diferenciar maiúsculas e acentos ("conecta" não
+// pega "conectadas"; "distrito" pega "distritos"). Com "*" no fim, casa com o começo da palavra ("desvincul*"
+// pega "desvinculado" e "desvínculo").
 export const CLASSIFIER_CONFIG = {
   Fly: {
     defaultCategoria: SEM_CATEGORIA,
+    porPalavra: true,
     rules: [
-      { keywords: ["altitude", "decimal digit"],                       categoria: "ALTURA" },
-      { keywords: ["altura estrutura", "altura da estrutura"],         categoria: "ALTURA" },
-      { keywords: ["distrito", "municipio", "município"],              categoria: "DISTRITO/MUNICÍPIO" },
-      { keywords: ["object object", "<br>", "quebra de linha"],        categoria: "CARACTERE ESPECIAL" },
-      { keywords: ["mapa", "coordenada", "latitude", "longitude"],     categoria: "CANDIDATO" },
-      { keywords: ["feign", "abrir sci", "disparar sci"],              categoria: "SCI" },
-      { keywords: ["unique query", "empresa duplicada"],               categoria: "EMPRESA DUPLICADA" },
-      { keywords: ["subprocesso", "camunda", "modalidade em aberto"],  categoria: "SOI" },
-      { keywords: ["botão", "botao", "permissão", "permissao", "keycloak"], categoria: "PERMISSÃO/BOTÃO" },
+      { keywords: ["fractal", "airflow", "dag", "dags"],                                 categoria: "FRACTAL" },
+      { keywords: ["conecta"],                                                           categoria: "CONECTA" },
+      { keywords: ["omni", "rf projeto*", "historico rf"],                               categoria: "OMNI" },
+      { keywords: ["vivo go", "vivogo"],                                                 categoria: "VIVO GO" },
+      { keywords: ["rpa"],                                                               categoria: "RPA" },
+      { keywords: ["desvincul*", "site declinado", "vinculo idmaster", "vinculo id master"], categoria: "ID MASTER" },
+      { keywords: ["altitude", "decimal digit", "altura estrutura", "altura da estrutura"], categoria: "ALTURA", causa: true },
+      { keywords: ["distrito", "municipio"],                                             categoria: "DISTRITO/MUNICÍPIO", causa: true },
+      { keywords: ["[object object]", "object object", "<br>", "quebra de linha"],       categoria: "CARACTERE ESPECIAL", causa: true },
+      { keywords: ["limite de caracteres", "limite do campo", "limite de campo", "limite de 100", "caracteres", "tamanho do campo", "tamanho de coluna", "value too long"], categoria: "LIMITE DE CAMPO", causa: true },
+      { keywords: ["upload", "tamanho do arquivo", "limite de upload", "anexar documento*", "anexar arquivo*", "anexar o contrato", "anexar contrato", "nao consigo anexar", "erro ao anexar", "falha ao anexar"], categoria: "ANEXO/UPLOAD" },
+      { keywords: ["unique query", "empresa duplicada"],                                 categoria: "EMPRESA DUPLICADA", causa: true },
+      { keywords: ["criacao da empresa", "criacao de empresa", "criar empresa", "criar a empresa", "cadastro da empresa", "cadastrar empresa", "sharing criada", "nova sharing", "criacao da sharing"], categoria: "CRIAÇÃO DE EMPRESA" },
+      { keywords: ["instabilidade", "jdbc", "fora do ar", "lentidao", "estouro de memoria", "indisponibilidade", "banco de homologacao", "conexoes no banco"], categoria: "INSTABILIDADE", causa: true },
+      { keywords: ["botao", "botoes", "permissao", "keycloak", "perfil", "apropriar", "sem acesso", "liberar acesso", "solicitacao de acesso", "role"], categoria: "PERMISSÃO/BOTÃO" },
+      { keywords: ["regress*", "regredir"],                                               categoria: "REGREDIR CANDIDATO" },
+      { keywords: ["stage", "voltar etapa", "voltar a etapa", "voltar para etapa", "voltar para a etapa", "retornar etapa", "retornar a etapa", "retornar para a etapa", "retorno de etapa", "retorno da etapa", "votar etapa", "avancar etapa"], categoria: "STAGE SCI" },
+      { keywords: ["fcu cancelad*", "fcus cancelad*", "cancelar fcu", "cancelar a fcu", "cancelar as fcu*", "cancelamento da fcu", "cancelamento das fcu*", "cancelamento de fcu*"], categoria: "CANCELAR FCU" },
+      { keywords: ["candidato cancelad*", "cancelar candidato", "cancelar o candidato", "cancelamento do candidato", "cancelamento de candidato"], categoria: "CANCELAR CANDIDATO" },
+      { keywords: ["soi cancelad*", "sois cancelad*", "cancelar soi", "cancelar a soi", "cancelamento da soi", "site cancelado", "cancelamento do site"], categoria: "CANCELAR SOI" },
+      { keywords: ["cancelar acionamento", "cancelamento do acionamento", "cancelar vendor", "rejeicao manual"], categoria: "CANCELAR VENDOR" },
+      { keywords: ["vendor", "acionamento"],                                             categoria: "VENDOR" },
+      { keywords: ["rejeit*", "rejeic*"],                                                  categoria: "REJEITAR" },
+      { keywords: ["feign", "abrir sci", "disparar sci", "abertura sci", "abertura de sci", "abertura da sci"], categoria: "SCI" },
+      { keywords: ["detentora"],                                                         categoria: "DETENTORA" },
+      { keywords: ["aluguel", "valor de locacao", "valor da locacao", "valor alterado", "valores alterados", "valor fcu", "valor da fcu"], categoria: "VALOR FCU" },
+      { keywords: ["alteracao sigla", "alteracao da sigla", "alteracao de sigla", "alterar sigla", "alterar a sigla", "troca de sigla", "trocar sigla", "sigla erb", "siglalogica", "renomead*", "nome do site"], categoria: "NOME SOI" },
+      { keywords: ["mapa", "coordenada*", "latitude", "longitude", "endereco", "cep"],   categoria: "CANDIDATO" },
+      { keywords: ["mimo", "ponto de irradiacao", "pontos de irradiacao", "quantidade de antenas", "id centennial", "grupo aprovador", "cidade atualizada", "campo atualizado", "campos atualizados", "campos alterados", "campo alterado"], categoria: "ALTERAÇÃO DE CAMPO" },
+      { keywords: ["soi state", "status da soi", "status soi", "state da soi"],          categoria: "STATUS SOI" },
+      { keywords: ["subprocesso", "camunda", "modalidade"],                              categoria: "SOI" },
+      { keywords: ["export*", "extracao", "extrair"],                                     categoria: "EXTRAÇÃO DE DADOS" },
+    ],
+    // Passo 3: só o módulo citado (quando nada mais específico bateu)
+    regrasGenericas: [
+      { keywords: ["sci", "fcu"],                                                        categoria: "SCI" },
+      { keywords: ["soi"],                                                               categoria: "SOI" },
+      { keywords: ["candidato"],                                                         categoria: "CANDIDATO" },
+    ],
+    // Passo 4: encerrado sem resposta / sem informação do solicitante
+    regrasSemRetorno: [
+      { keywords: ["falta de retorno", "falta de resposta", "nao retorno", "sem retorno", "prazo expirado", "ausencia de informac*", "falta de evidenc*", "falta de informac*", "nao houve retorno"], categoria: "FALTA DE RETORNO" },
     ],
   },
 
@@ -68,16 +113,17 @@ export const CLASSIFIER_CONFIG = {
 export const CATEGORY_ALIASES = {
   Fly: {
     // VENDOR
-    "impossibilitando vendor":   "IMPOSSIBILITANDO VENDOR",
-    "vendor impossibilitado":    "IMPOSSIBILITANDO VENDOR",
-    "vendor bloqueado":          "IMPOSSIBILITANDO VENDOR",
-    "grupo vendor":              "GRUPO VENDOR",
-    "vendor grupo":              "GRUPO VENDOR",
+    "impossibilitando vendor":   "VENDOR",
+    "vendor impossibilitado":    "VENDOR",
+    "vendor bloqueado":          "VENDOR",
+    "grupo vendor":              "VENDOR",
+    "vendor grupo":              "VENDOR",
     "cancelar vendor":           "CANCELAR VENDOR",
     "cancelamento vendor":       "CANCELAR VENDOR",
     "vendor cancelar":           "CANCELAR VENDOR",
     "cancelar acionamento":      "CANCELAR VENDOR",
-    "acionamento":               "CANCELAR VENDOR",
+    "acionamento":               "VENDOR",
+    "vendor":                    "VENDOR",
     // CANDIDATO (inclui endereço e coordenadas, conforme a legenda)
     "candidato":                 "CANDIDATO",
     "editar endereco candidato": "CANDIDATO",
@@ -160,6 +206,33 @@ export const CATEGORY_ALIASES = {
     "chamado sem resposta":      "FALTA DE RETORNO",
     "sem retorno":               "FALTA DE RETORNO",
     "falta retorno":             "FALTA DE RETORNO",
+    // Tags com nomes diferentes para a mesma coisa
+    "vivo go":                   "VIVO GO",
+    "vivogo":                    "VIVO GO",
+    "correcao campo vivogo":     "VIVO GO",
+    "stage":                     "STAGE SCI",
+    "alterar stage":             "STAGE SCI",
+    "alteracao stage":           "STAGE SCI",
+    "state":                     "REGREDIR CANDIDATO",
+    "regressao state":           "REGREDIR CANDIDATO",
+    "editar":                    "PERMISSÃO/BOTÃO",
+    "botao editar":              "PERMISSÃO/BOTÃO",
+    "botao":                     "PERMISSÃO/BOTÃO",
+    "permissao":                 "PERMISSÃO/BOTÃO",
+    "correcao":                  "ALTERAÇÃO DE CAMPO",
+    "alteracao campo":           "ALTERAÇÃO DE CAMPO",
+    "alteracao id centennial":   "ALTERAÇÃO DE CAMPO",
+    "id master":                 "ID MASTER",
+    "idmaster":                  "ID MASTER",
+    "desvinculo id master":      "ID MASTER",
+    "site declinado":            "ID MASTER",
+    "fractal":                   "FRACTAL",
+    "conecta":                   "CONECTA",
+    "rpa":                       "RPA",
+    "instabilidade":             "INSTABILIDADE",
+    "limite caracteres":         "LIMITE DE CAMPO",
+    "limite campo":              "LIMITE DE CAMPO",
+    "falta evidencia":           "FALTA DE RETORNO",
     // SCI e SOI genéricos (curtos — só vencem se nada mais específico bater)
     "definicao modalidade":      "SOI",
     "sci":                       "SCI",
@@ -189,7 +262,7 @@ export const CATEGORY_DESCRIPTIONS = {
   "E-MAIL":                  "Solicitação para anexar e-mail na FCU.",
   "REJEITAR":                "Rejeição de candidato.",
   "DETENTORA":               "Alteração de id_detentora.",
-  "STAGE SCI":               "Alteração de stage da SCI e do processo no Camunda.",
+  "STAGE SCI":               "Voltar ou avançar o stage/etapa da SCI/FCU (e do processo no Camunda).",
   "OMNI":                    "Deleção de linhas e correção de campos no Omni.",
   "CANCELAR FCU":            "Mudar o valor da FCU para NULL ou cancelá-la.",
   "RELATÓRIO":               "Mudança de dados de processo na base.",
@@ -198,7 +271,19 @@ export const CATEGORY_DESCRIPTIONS = {
   "CARACTERE ESPECIAL":      "Erro [object Object] por caractere especial ou quebra de linha.",
   "EMPRESA DUPLICADA":       "Empresa duplicada no VivoGo (unique query result).",
   "PERMISSÃO/BOTÃO":         "Botão não aparece ou usuário sem permissão.",
-  "FALTA DE RETORNO":        "Chamado encerrado sem resposta do solicitante.",
+  "FALTA DE RETORNO":        "Chamado encerrado sem resposta ou sem as informações/evidências do solicitante.",
+  "VENDOR":                  "Acionamento de vendor: disparo, grupo, sigla ou vendor impossibilitado.",
+  "VIVO GO":                 "Falhas e correções no Vivo GO (consultas, tabela Master, exportações).",
+  "FRACTAL":                 "Fractal: processamentos, cadastros e deploy das DAGs no Airflow.",
+  "CONECTA":                 "Conecta: módulos de locação, processos e aquisição.",
+  "ID MASTER":               "Site declinado: cancelar a SOI e desvincular o ID Master.",
+  "LIMITE DE CAMPO":         "Texto maior que o limite de caracteres do campo.",
+  "CRIAÇÃO DE EMPRESA":      "Criação de empresa/sharing no Fly.",
+  "INSTABILIDADE":           "Instabilidade ou indisponibilidade do sistema (banco, serviços).",
+  "RPA":                     "RPA parado ou com falha.",
+  "ANEXO/UPLOAD":            "Falha ao anexar arquivos (tamanho acima do limite, formato).",
+  "EXTRAÇÃO DE DADOS":       "Pedido de exportação ou extração de dados.",
+  "ALTERAÇÃO DE CAMPO":      "Correção pontual de um campo na base (ex.: ID Centennial, quantidade de antenas).",
   [SEM_CATEGORIA]:           "Chamados sem a tag CATEGORIA e sem palavra-chave conhecida.",
 };
 
@@ -304,8 +389,9 @@ export function criarRegistro() {
 /**
  * Classifica um comentário.
  * Prioridade: 1) tag CATEGORIA: válida → 2) palavra-chave → 3) categoria padrão
+ * `contexto` = { titulo, pedido } do chamado, usado quando o comentário não basta.
  */
-export function classificarComentario(texto, mode, registro) {
+export function classificarComentario(texto, mode, registro, contexto = {}) {
   const cfg = CLASSIFIER_CONFIG[mode] || CLASSIFIER_CONFIG.Fly;
   const rules = cfg.rules || CLASSIFIER_CONFIG.Fly.rules;
 
@@ -315,11 +401,49 @@ export function classificarComentario(texto, mode, registro) {
     if (cat) return cat;
   }
 
-  const txt = (texto || "").toLowerCase();
-  for (const rule of rules) {
-    if (rule.keywords.some((kw) => txt.includes(kw.toLowerCase()))) return rule.categoria;
+  if (!cfg.porPalavra) {
+    const txt = (texto || "").toLowerCase();
+    for (const rule of rules) {
+      if (rule.keywords.some((kw) => txt.includes(kw.toLowerCase()))) return rule.categoria;
+    }
+    return cfg.defaultCategoria;
   }
-  return cfg.defaultCategoria;
+
+  const comentario = textoBusca(texto);
+  const pedido     = textoBusca(contexto.titulo, contexto.pedido);
+  return aplicarRegras(rules.filter((r) => r.causa), comentario)
+      || aplicarRegras(rules, pedido)
+      || aplicarRegras(rules, comentario)
+      || aplicarRegras(cfg.regrasGenericas, comentario, pedido)
+      || aplicarRegras(cfg.regrasSemRetorno, comentario)
+      || cfg.defaultCategoria;
+}
+
+// Texto em minúsculas, sem acentos e sem pontuação, com espaço nas pontas
+function textoBusca(...partes) {
+  const t = partes.filter(Boolean).join(" ").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return { bruto: t, limpo: ` ${t.replace(/[^a-z0-9]+/g, " ").trim()} ` };
+}
+
+// Primeira regra cuja palavra-chave aparece no texto como palavra inteira
+// (ou como começo de palavra, se terminar com "*"). Palavras-chave com
+// símbolos (ex.: "<br>") são buscadas no texto original.
+function aplicarRegras(regras, ...textos) {
+  for (const rule of regras || []) {
+    for (const kw of rule.keywords) {
+      const prefixo = kw.endsWith("*");
+      const k = (prefixo ? kw.slice(0, -1) : kw).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const simbolo = /[^a-z0-9\s]/.test(k);
+      // palavra inteira aceita o plural ("distrito" pega "distritos")
+      const alvo = prefixo ? ` ${k}` : null;
+      const casa = (t) => (simbolo ? t.bruto.includes(k)
+        : prefixo ? t.limpo.includes(alvo)
+        : t.limpo.includes(` ${k} `) || t.limpo.includes(` ${k}s `) || t.limpo.includes(` ${k}es `));
+      if (textos.some(casa)) return rule.categoria;
+    }
+  }
+  return null;
 }
 
 /**
@@ -433,6 +557,8 @@ export function subtiposUnicos(subcategorias, idsPermitidos = null) {
  * @param opts  { mode, colDate, colComment, colId, colTitulo?, colPedido? }
  * @returns     [{ id, date, category, description, titulo, pedido }]
  */
+const idReal = (t) => !String(t.id).startsWith("#");
+
 export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, colId, colTitulo = -1, colPedido = -1 }) {
   const registro = criarRegistro();
   const tickets = [];
@@ -441,15 +567,31 @@ export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, col
     const date = parseDate(row[colDate]);
     if (!comentario || !date) return;
     const idReal = colId != null ? String(row[colId] || "").trim() : "";
+    // O que o usuário pediu ao abrir o chamado (quando a planilha traz essas colunas)
+    const titulo = colTitulo >= 0 ? String(row[colTitulo] || "").trim() : "";
+    const pedido = colPedido >= 0 ? String(row[colPedido] || "").trim() : "";
     tickets.push({
       id:          idReal || `#${idx + 1}`,
       date,
-      category:    classificarComentario(comentario, mode, registro),
+      category:    classificarComentario(comentario, mode, registro, { titulo, pedido }),
       description: comentario,
-      // O que o usuário pediu ao abrir o chamado (quando a planilha traz essas colunas)
-      titulo:      colTitulo >= 0 ? String(row[colTitulo] || "").trim() : "",
-      pedido:      colPedido >= 0 ? String(row[colPedido] || "").trim() : "",
+      titulo,
+      pedido,
     });
+  });
+
+  // Um chamado tem vários comentários (andamento, pedido de informação...).
+  // Comentários que ficaram SEM CATEGORIA ou FALTA DE RETORNO herdam a categoria
+  // do comentário mais recente desse mesmo chamado que tenha uma categoria real.
+  const fracas = new Set([SEM_CATEGORIA, "FALTA DE RETORNO"]);
+  const porChamado = new Map();
+  tickets.forEach((t) => {
+    if (!idReal(t) || fracas.has(t.category)) return;
+    const atual = porChamado.get(t.id);
+    if (!atual || t.date > atual.date) porChamado.set(t.id, t);
+  });
+  tickets.forEach((t) => {
+    if (fracas.has(t.category) && porChamado.has(t.id)) t.category = porChamado.get(t.id).category;
   });
   return tickets;
 }
