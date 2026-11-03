@@ -1827,16 +1827,24 @@ function DashboardApp() {
     return t;
   }, [periodData, filteredSystems]);
 
+  // Últimos 30 dias x 30 dias anteriores, contados a partir do chamado mais
+  // recente da PLANILHA (a mesma referência do filtro de período), e não do mais
+  // recente de cada categoria.
   const tickets30 = useMemo(() => {
+    if (!anchor) return { count: 0, delta: null };
+    const c30 = new Date(anchor); c30.setDate(c30.getDate() - 30);
+    const c60 = new Date(anchor); c60.setDate(c60.getDate() - 60);
     let current = 0, previous = 0;
     filteredSystems.forEach((s) => {
       Object.values(data[s] || {}).forEach((v) => {
-        current  += countInRange(v.tickets, 30);
-        previous += countInRange(v.tickets, 60) - countInRange(v.tickets, 30);
+        v.tickets.forEach((t) => {
+          if (t.date >= c30) current++;
+          else if (t.date >= c60) previous++;
+        });
       });
     });
     return { count: current, delta: percentChange(current, previous) };
-  }, [data, filteredSystems]);
+  }, [data, filteredSystems, anchor]);
 
   const analysedCount = useMemo(
     () => filteredCards.filter((c) => c.analysis).length,
