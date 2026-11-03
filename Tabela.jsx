@@ -16,12 +16,27 @@ export const CORES_GRUPO = {
   "SOI":                        ["#388E3C", "#66BB6A", "#FFFFFF"],
   "Mudança de Stage/Fluxo":     ["#9C27B0", "#7B1FA2", "#FFFFFF"],
   "Correção de Campo":          ["#E65100", "#FF6E40", "#FFFFFF"],
+  "OMNI":                       ["#BF360C", "#E64A19", "#FFFFFF"],
   "Detentora/Vendor":           ["#4E342E", "#8D6E63", "#FFFFFF"],
   "Problemas Técnicos/Sistema": ["#E53935", "#E57373", "#FFFFFF"],
-  "Outros":                     ["#546E7A", "#90A4AE", "#FFFFFF"],
+  "Falta de Retorno":           ["#C62828", "#D32F2F", "#FFFFFF"],
+  "Outros / Diversos":          ["#78909C", "#B0BEC5", "#FFFFFF"],
 };
 const COR_CABECALHO = "#1565C0";
 const COR_LINHA     = "#EEF2FF";
+
+// Subníveis da Correção de Campo (como na planilha manual), pelo começo do nome
+export const NIVEIS_CAMPO = [
+  { prefixo: "campo invalido", titulo: "Dado inválido (sistema) — valor rejeitado pelo sistema" },
+  { prefixo: "campo correcao", titulo: "Correção solicitada (cliente) — campo não editável na interface" },
+];
+const COR_NIVEL = "#BF360C";
+export function nivelDe(grupo, nome) {
+  if (grupo !== "Correção de Campo") return null;
+  const n = String(nome || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const i = NIVEIS_CAMPO.findIndex((x) => n.startsWith(x.prefixo));
+  return i === -1 ? null : { ordem: i, titulo: NIVEIS_CAMPO[i].titulo };
+}
 
 export const pct = (qtd, total) => (total ? `${((qtd / total) * 100).toFixed(1)}%` : "0.0%");
 
@@ -81,7 +96,7 @@ export default function TabelaReincidencia({ grupos, total, periodoLabel, analis
           </thead>
           <tbody>
             {grupos.map((g) => {
-              const [corGrupo, corSub, textoSub] = CORES_GRUPO[g.nome] || CORES_GRUPO.Outros;
+              const [corGrupo, corSub, textoSub] = CORES_GRUPO[g.nome] || CORES_GRUPO["Outros / Diversos"];
               return (
                 <Fragment key={g.nome}>
                   <tr>
@@ -94,10 +109,21 @@ export default function TabelaReincidencia({ grupos, total, periodoLabel, analis
                       {g.ids.length > 12 ? `${g.ids.slice(0, 12).join(", ")} e mais ${g.ids.length - 12}` : g.ids.join(", ")}
                     </Box>
                   </tr>
-                  {g.linhas.map((l) => {
+                  {g.linhas.map((l, li) => {
                     const estaAberta = aberta === l.chave;
+                    const nivel = l.nivel && (li === 0 || g.linhas[li - 1].nivel?.titulo !== l.nivel.titulo) ? g.niveis[l.nivel.titulo] : null;
                     return (
                       <Fragment key={l.chave}>
+                        {nivel && (
+                          <tr>
+                            <Box as="td" {...celula} bg={COR_NIVEL} color="white" fontWeight="700">{g.nome}</Box>
+                            <Box as="td" {...celula} bg={COR_NIVEL} color="white" fontWeight="700">{l.nivel.titulo}</Box>
+                            <Box as="td" {...celula} bg={COR_NIVEL} color="white" fontWeight="700" textAlign="center">{nivel.qtd}</Box>
+                            <Box as="td" {...celula} bg={COR_NIVEL} color="white" fontWeight="700" textAlign="center">{pct(nivel.qtd, total)}</Box>
+                            <Box as="td" {...celula} bg={COR_NIVEL} />
+                            <Box as="td" {...celula} bg={COR_NIVEL} color="white" fontWeight="600">{nivel.ids.join(", ")}</Box>
+                          </tr>
+                        )}
                         <Box as="tr" cursor="pointer" onClick={() => setAberta(estaAberta ? null : l.chave)}
                           _hover={{ filter: "brightness(0.97)" }}>
                           <Box as="td" {...celula} bg={linhaBg} color="gray.500">{g.nome}</Box>
@@ -200,10 +226,15 @@ export async function exportarExcel({ grupos, total, periodoLabel, nomeAba, nome
   ws.getRow(1).height = 22;
 
   grupos.forEach((g, gi) => {
-    const [corGrupo, corSub, textoSub] = CORES_GRUPO[g.nome] || CORES_GRUPO.Outros;
+    const [corGrupo, corSub, textoSub] = CORES_GRUPO[g.nome] || CORES_GRUPO["Outros / Diversos"];
     const sub = ws.addRow([g.nome, `${g.nome} · Subtotal`, g.qtd, pct(g.qtd, total), "", g.ids.join(", ")]);
     estilo(sub, { fill: corGrupo, cor: "#FFFFFF", negrito: true, tamanho: 10, centro: [3, 4] });
-    g.linhas.forEach((l) => {
+    g.linhas.forEach((l, li) => {
+      if (l.nivel && (li === 0 || g.linhas[li - 1].nivel?.titulo !== l.nivel.titulo)) {
+        const n = g.niveis[l.nivel.titulo];
+        const rn = ws.addRow([g.nome, l.nivel.titulo, n.qtd, pct(n.qtd, total), "", n.ids.join(", ")]);
+        estilo(rn, { fill: COR_NIVEL, cor: "#FFFFFF", negrito: true, tamanho: 9.5, centro: [3, 4] });
+      }
       const r = ws.addRow([g.nome, l.nome, l.qtd, pct(l.qtd, total), l.motivo || "", l.ids.join(", ")]);
       estilo(r, { fill: COR_LINHA, tamanho: 9, centro: [3, 4] });
       const b = r.getCell(2);
