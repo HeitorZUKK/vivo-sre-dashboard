@@ -606,8 +606,8 @@ export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, col
   });
 
   // Um chamado tem vários comentários (andamento, pedido de informação...).
-  // Comentários que ficaram SEM CATEGORIA ou FALTA DE RETORNO herdam a categoria
-  // do comentário mais recente desse mesmo chamado que tenha uma categoria real.
+  // Todos herdam a categoria do comentário mais recente desse chamado que tenha
+  // uma categoria real (comentários SEM CATEGORIA/FALTA DE RETORNO não decidem).
   const fracas = new Set([SEM_CATEGORIA, "FALTA DE RETORNO"]);
   const porChamado = new Map();
   tickets.forEach((t) => {
@@ -615,8 +615,11 @@ export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, col
     const atual = porChamado.get(t.id);
     if (!atual || t.date > atual.date) porChamado.set(t.id, t);
   });
+  // Cada chamado fica com UMA categoria só: a do comentário mais recente que tem
+  // categoria real (o de encerramento, num chamado fechado). Assim o mesmo
+  // chamado não é contado em duas categorias.
   tickets.forEach((t) => {
-    if (fracas.has(t.category) && porChamado.has(t.id)) t.category = porChamado.get(t.id).category;
+    if (porChamado.has(t.id)) t.category = porChamado.get(t.id).category;
   });
   return tickets;
 }
