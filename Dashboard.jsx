@@ -17,8 +17,10 @@ import {
 import Chart from "react-apexcharts";
 import {
   classificarLinhas, getCategoryDescription, normCatKey, filtrarPorExecutor, indiceColuna, subtiposUnicos,
+  GRUPOS_REINCIDENCIA, resolverGrupo, grupoPadrao,
 } from "./classificacao.js";
 import Painel from "./Painel.jsx";
+import TabelaReincidencia, { exportarExcel } from "./Tabela.jsx";
 
 // =============================================================================
 // SEÇÃO 1 — CONFIGURAÇÃO
@@ -1628,7 +1630,7 @@ function OverviewCharts({ data, systems }) {
 // SEÇÃO 8 — COMPONENTE PRINCIPAL
 // =============================================================================
 
-const INITIAL_FILTERS = { system: MODE_CONFIG[DEFAULT_MODE]?.systems[0] || "Fly", categories: [], period: "90", priority: "" };
+const INITIAL_FILTERS = { system: MODE_CONFIG[DEFAULT_MODE]?.systems[0] || "Fly", categories: [], period: "30", priority: "" };
 
 // =============================================================================
 // PERSISTÊNCIA DE ANÁLISES (localStorage)
@@ -1840,6 +1842,71 @@ function DashboardApp() {
     () => filteredCards.filter((c) => c.analysis).length,
     [filteredCards]
   );
+
+  // ── Tabela de reincidência (formato da planilha manual) ─────────────────────
+  // Grupo → subtipo da análise da IA, só com os chamados do período e dos filtros.
+  const periodoLabel = useMemo(() => {
+    if (!anchor) return "";
+    const fmt = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    if (periodDays >= 9999) return `todo o histórico até ${fmt(anchor)}`;
+    const ini = new Date(anchor); ini.setDate(ini.getDate() - periodDays);
+    return `${fmt(ini)} a ${fmt(anchor)}`;
+  }, [anchor, periodDays]);
+
+  const tabela = useMemo(() => {
+    const limpa = (id) => String(id).replace("#", "").trim();
+    const porGrupo = new Map();
+    filteredCards.forEach(({ cat, val, analysis }) => {
+      const porId = new Map(val.tickets.map((t) => [limpa(t.id), t]));
+      const todos = subtiposNoPeriodo(analysis?.subcategorias, val.tickets);
+      const analisados = new Set(todos.flatMap((s) => s.ids));
+      const subs = filters.priority ? todos.filter((s) => s.prioridade === filters.priority) : todos;
+      const linhas = subs.map((s) => ({
+        grupo: resolverGrupo(s, cat), nome: s.nome, motivo: s.motivo || s.descricao || "",
+        sugestao: s.sugestao || "", prioridade: s.prioridade || null, ids: s.ids, categoria: cat,
+      }));
+      const resto = [...porId.keys()].filter((id) => !analisados.has(id));
+      if (resto.length && !filters.priority) {
+        linhas.push({
+          grupo: grupoPadrao(cat), nome: `${cat} · Ainda sem análise da IA`,
+          motivo: "Chamados que entraram depois da última análise. Rode a análise de novo para agrupá-los.",
+          sugestao: "", prioridade: null, ids: resto, categoria: cat, semAnalise: true,
+        });
+      }
+      linhas.forEach((l) => {
+        l.ids = [...l.ids].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+        l.qtd = l.ids.length;
+        l.tickets = l.ids.map((id) => porId.get(id)).filter(Boolean);
+        l.chave = `${cat}::${l.nome}`;
+        if (!porGrupo.has(l.grupo)) porGrupo.set(l.grupo, []);
+        porGrupo.get(l.grupo).push(l);
+      });
+    });
+    const grupos = GRUPOS_REINCIDENCIA.filter((g) => porGrupo.has(g)).map((nome) => {
+      const linhas = porGrupo.get(nome).sort((a, b) => (!!a.semAnalise - !!b.semAnalise) || (b.qtd - a.qtd));
+      const ids = [...new Set(linhas.flatMap((l) => l.ids))].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+      return { nome, linhas, ids, qtd: ids.length };
+    });
+    const total = grupos.reduce((acc, g) => acc + g.qtd, 0);
+    return { grupos, total };
+  }, [filteredCards, filters.priority]);
+
+  const [exportandoExcel, setExportandoExcel] = useState(false);
+  const handleExportarExcel = useCallback(async () => {
+    if (!tabela.grupos.length) return;
+    setExportandoExcel(true);
+    try {
+      await exportarExcel({
+        grupos: tabela.grupos, total: tabela.total, periodoLabel,
+        nomeAba: `Reincidências ${periodoLabel.replace(/\/\d{4}/g, "").replace(/\//g, "-")}`,
+        nomeArquivo: `reincidencia_${periodoLabel.replace(/\//g, "-").replace(/\s+/g, "_")}.xlsx`,
+      });
+    } catch (e) {
+      toast({ title: "Não foi possível gerar o Excel", description: e.message, status: "error", duration: 5000 });
+    } finally {
+      setExportandoExcel(false);
+    }
+  }, [tabela, periodoLabel, toast]);
 
   // ── Ações ────────────────────────────────────────────────────────────────────
 
@@ -2428,14 +2495,30 @@ function DashboardApp() {
           <StatCard label="Com análise da IA" value={`${analysedCount} de ${filteredCards.length}`} color="navy" />
         </SimpleGrid>
 
-        <Tabs colorScheme="brand" variant="soft-rounded" defaultIndex={1} isLazy>
+        <Tabs colorScheme="brand" variant="soft-rounded" defaultIndex={0} isLazy>
           <TabList mb="5" bg={cardBg} p="1" borderRadius="xl" borderWidth="1px" borderColor={border} gap="1">
+            <Tab fontSize="sm" borderRadius="lg">Tabela de reincidência</Tab>
             <Tab fontSize="sm" borderRadius="lg">Visão geral</Tab>
             <Tab fontSize="sm" borderRadius="lg">Chamados por categoria</Tab>
             <Tab fontSize="sm" borderRadius="lg">Painel</Tab>
           </TabList>
 
           <TabPanels>
+            <TabPanel px="0">
+              {sheetLoading && !tabela.grupos.length ? (
+                <Box textAlign="center" py="16" color="gray.400"><Text>Carregando…</Text></Box>
+              ) : (
+                <TabelaReincidencia
+                  grupos={tabela.grupos}
+                  total={tabela.total}
+                  periodoLabel={periodoLabel}
+                  analiseEm={sharedUpdatedAt ? new Date(sharedUpdatedAt).toLocaleDateString("pt-BR") : null}
+                  onExportar={handleExportarExcel}
+                  exportando={exportandoExcel}
+                />
+              )}
+            </TabPanel>
+
             <TabPanel px="0">
               <OverviewCharts data={periodData} systems={SYSTEMS} />
             </TabPanel>
