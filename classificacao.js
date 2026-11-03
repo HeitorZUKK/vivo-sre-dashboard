@@ -506,6 +506,11 @@ export function parseDate(raw) {
 // Planilhas sem essa coluna (formato antigo, Valoriza) passam sem filtro.
 export const EXECUTOR_ACEITO = "zukk";
 
+// Só chamados com este status (coluna chamado_status) aparecem no site e na
+// análise. Os demais (Aberto, Em Análise, Aguardando Retorno, Cancelado...) são
+// ignorados. Sem a coluna na planilha, o filtro não é aplicado.
+export const STATUS_ACEITO = "fechado";
+
 // Posição de uma coluna pelo nome do cabeçalho (ignora maiúsculas, acentos e "_")
 export function indiceColuna(cabecalho, nome) {
   const alvo = normText(nome);
@@ -525,14 +530,19 @@ export const ENCAMINHADO_PARA_OUTRO_TIME = [
 
 /**
  * Recebe TODAS as linhas da planilha (com o cabeçalho na primeira) e devolve
- * { cabecalho, rows, ignorados, encaminhados } — rows já sem cabeçalho, só com
- * executor Zukk e sem os chamados encaminhados para outro time.
+ * { cabecalho, rows, ignorados, ... } — rows já sem cabeçalho, só com chamados
+ * FECHADOS, executor Zukk e sem os chamados encaminhados para outro time.
  */
 export function filtrarPorExecutor(values) {
   const [cabecalho = [], ...todas] = values || [];
   const colExec = indiceColuna(cabecalho, "chamado_executor");
   let rows = colExec === -1 ? todas : todas.filter((r) => normText(r[colExec]) === EXECUTOR_ACEITO);
   const ignoradosExecutor = todas.length - rows.length;
+
+  const colStatus = indiceColuna(cabecalho, "chamado_status");
+  const antesStatus = rows.length;
+  if (colStatus !== -1) rows = rows.filter((r) => normText(r[colStatus]) === STATUS_ACEITO);
+  const ignoradosStatus = antesStatus - rows.length;
 
   const colId = indiceColuna(cabecalho, "chamado_id");
   const colCom = indiceColuna(cabecalho, "comentario");
@@ -547,7 +557,7 @@ export function filtrarPorExecutor(values) {
     encaminhados = idsFora.size;
     if (encaminhados) rows = rows.filter((r) => !idsFora.has(String(r[colId]).trim()));
   }
-  return { cabecalho, rows, ignorados: todas.length - rows.length, ignoradosExecutor, encaminhados };
+  return { cabecalho, rows, ignorados: todas.length - rows.length, ignoradosExecutor, ignoradosStatus, encaminhados };
 }
 
 /**
