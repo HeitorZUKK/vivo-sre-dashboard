@@ -644,9 +644,11 @@ export const GRUPOS_REINCIDENCIA = [
   "SOI",
   "Mudança de Stage/Fluxo",
   "Correção de Campo",
+  "OMNI",
   "Detentora/Vendor",
   "Problemas Técnicos/Sistema",
-  "Outros",
+  "Falta de Retorno",
+  "Outros / Diversos",
 ];
 
 const GRUPO_POR_CATEGORIA = {
@@ -655,7 +657,7 @@ const GRUPO_POR_CATEGORIA = {
   "CANDIDATO": "Candidato SOI", "REJEITAR": "Candidato SOI", "REGREDIR CANDIDATO": "Candidato SOI", "CANCELAR CANDIDATO": "Candidato SOI",
   "SOI": "SOI", "STATUS SOI": "SOI", "CANCELAR SOI": "SOI", "NOME SOI": "SOI", "ID MASTER": "SOI",
   "ALTERAÇÃO DE CAMPO": "Correção de Campo", "DISTRITO/MUNICÍPIO": "Correção de Campo", "ALTURA": "Correção de Campo",
-  "CARACTERE ESPECIAL": "Correção de Campo", "OMNI": "Correção de Campo",
+  "CARACTERE ESPECIAL": "Correção de Campo", "OMNI": "OMNI", "FALTA DE RETORNO": "Falta de Retorno",
   "DETENTORA": "Detentora/Vendor", "VENDOR": "Detentora/Vendor", "CANCELAR VENDOR": "Detentora/Vendor",
   "FRACTAL": "Problemas Técnicos/Sistema", "CONECTA": "Problemas Técnicos/Sistema", "VIVO GO": "Problemas Técnicos/Sistema",
   "INSTABILIDADE": "Problemas Técnicos/Sistema", "RPA": "Problemas Técnicos/Sistema", "LIMITE DE CAMPO": "Problemas Técnicos/Sistema",
@@ -666,12 +668,14 @@ export function grupoPadrao(categoria, nomeSubtipo = "") {
   const n = ` ${normText(nomeSubtipo)} `;
   if (/^ (campo|correcao) /.test(n)) return "Correção de Campo";
   if (/ (stage|regressao|regredir) /.test(n)) return "Mudança de Stage/Fluxo";
-  return GRUPO_POR_CATEGORIA[String(categoria || "").toUpperCase().trim()] || "Outros";
+  return GRUPO_POR_CATEGORIA[String(categoria || "").toUpperCase().trim()] || "Outros / Diversos";
 }
 
 // Grupo de um subtipo: o que a IA informou (se for válido) ou o deduzido
 export function resolverGrupo(subtipo, categoria) {
   const g = String(subtipo?.grupo || "").trim();
-  const valido = GRUPOS_REINCIDENCIA.find((x) => normText(x) === normText(g));
+  const ng = normText(g);
+  const valido = GRUPOS_REINCIDENCIA.find((x) => normText(x) === ng)
+    || (ng === "outros" || ng === "diversos" ? "Outros / Diversos" : null);
   return valido || grupoPadrao(categoria, subtipo?.nome);
 }

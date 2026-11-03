@@ -20,7 +20,7 @@ import {
   GRUPOS_REINCIDENCIA, resolverGrupo, grupoPadrao,
 } from "./classificacao.js";
 import Painel from "./Painel.jsx";
-import TabelaReincidencia, { exportarExcel } from "./Tabela.jsx";
+import TabelaReincidencia, { exportarExcel, nivelDe } from "./Tabela.jsx";
 
 // =============================================================================
 // SEÇÃO 1 — CONFIGURAÇÃO
@@ -1101,7 +1101,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
 
 // ── FilterPanel ───────────────────────────────────────────────────────────────
 
-function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, onModeChange, systems }) {
+function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, onModeChange, systems, meses = [] }) {
   const bg        = useColorModeValue("gray.50", "gray.900");
   const border    = useColorModeValue("gray.200", "gray.700");
   const modeCfg   = MODE_CONFIG[activeMode];
@@ -1153,6 +1153,11 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
             <option value="60">Últimos 60 dias</option>
             <option value="90">Últimos 90 dias</option>
             <option value="9999">Todo o histórico</option>
+            {meses.length > 0 && (
+              <optgroup label="Mês fechado">
+                {meses.map((m) => <option key={m.valor} value={m.valor}>{m.label}</option>)}
+              </optgroup>
+            )}
           </Select>
         </FormControl>
         <FormControl>
@@ -1735,7 +1740,18 @@ function DashboardApp() {
     }
   }, [activeSystem, filters.system]);
 
-  const periodDays = parseInt(filters.period || "90");
+  // Período: janela móvel ("30" = últimos 30 dias) ou mês fechado ("mes:2026-10",
+  // chamados encerrados naquele mês — mesmo recorte da planilha manual).
+  const mesSelecionado = String(filters.period || "").startsWith("mes:") ? filters.period.slice(4) : null;
+  const periodDays = mesSelecionado ? 9999 : parseInt(filters.period || "30");
+  const periodoMes = useMemo(() => {
+    if (!mesSelecionado) return null;
+    const [ano, mes] = mesSelecionado.split("-").map(Number);
+    const inicio = new Date(ano, mes - 1, 1);
+    const fim    = new Date(ano, mes, 1);
+    const nome   = inicio.toLocaleDateString("pt-BR", { month: "long" });
+    return { inicio, fim, nome: nome.charAt(0).toUpperCase() + nome.slice(1), ano };
+  }, [mesSelecionado]);
 
   // periodData: cópia de `data` contendo apenas tickets dentro do período selecionado.
   // Alimenta TUDO na tela (cards, contagens, gráficos, lista) para que o filtro de
@@ -1755,6 +1771,19 @@ function DashboardApp() {
   }, [data]);
 
   const periodData = useMemo(() => {
+    if (periodoMes) {
+      const filtered = {};
+      Object.entries(data).forEach(([sys, cats]) => {
+        Object.entries(cats).forEach(([cat, val]) => {
+          const tickets = val.tickets.filter((t) => t.date >= periodoMes.inicio && t.date < periodoMes.fim);
+          if (tickets.length > 0) {
+            if (!filtered[sys]) filtered[sys] = {};
+            filtered[sys][cat] = { ...val, tickets };
+          }
+        });
+      });
+      return filtered;
+    }
     // "Todo o histórico" (9999) — não filtra nada
     if (periodDays >= 9999) return data;
     const maisRecente = anchor;
@@ -1774,7 +1803,20 @@ function DashboardApp() {
       });
     });
     return filtered;
-  }, [data, periodDays, anchor]);
+  }, [data, periodDays, anchor, periodoMes]);
+
+  // Meses com chamados na planilha (do mais recente para o mais antigo, até 12)
+  const mesesDisponiveis = useMemo(() => {
+    const vistos = new Set();
+    Object.values(data).forEach((cats) => Object.values(cats).forEach((v) => v.tickets.forEach((t) => {
+      vistos.add(`${t.date.getFullYear()}-${String(t.date.getMonth() + 1).padStart(2, "0")}`);
+    })));
+    return [...vistos].sort().reverse().slice(0, 12).map((ym) => {
+      const [a, m] = ym.split("-").map(Number);
+      const nome = new Date(a, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+      return { valor: `mes:${ym}`, label: nome.charAt(0).toUpperCase() + nome.slice(1) };
+    });
+  }, [data]);
 
   const allCategories = useMemo(() => {
     const cats = new Set();
@@ -1854,12 +1896,13 @@ function DashboardApp() {
   // ── Tabela de reincidência (formato da planilha manual) ─────────────────────
   // Grupo → subtipo da análise da IA, só com os chamados do período e dos filtros.
   const periodoLabel = useMemo(() => {
+    if (periodoMes) return `${periodoMes.nome} de ${periodoMes.ano}`;
     if (!anchor) return "";
     const fmt = (d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
     if (periodDays >= 9999) return `todo o histórico até ${fmt(anchor)}`;
     const ini = new Date(anchor); ini.setDate(ini.getDate() - periodDays);
     return `${fmt(ini)} a ${fmt(anchor)}`;
-  }, [anchor, periodDays]);
+  }, [anchor, periodDays, periodoMes]);
 
   const tabela = useMemo(() => {
     const limpa = (id) => String(id).replace("#", "").trim();
@@ -1882,18 +1925,41 @@ function DashboardApp() {
         });
       }
       linhas.forEach((l) => {
-        l.ids = [...l.ids].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
-        l.qtd = l.ids.length;
         l.tickets = l.ids.map((id) => porId.get(id)).filter(Boolean);
-        l.chave = `${cat}::${l.nome}`;
         if (!porGrupo.has(l.grupo)) porGrupo.set(l.grupo, []);
-        porGrupo.get(l.grupo).push(l);
+        const lista = porGrupo.get(l.grupo);
+        // A mesma subcategoria vinda de categorias diferentes vira UMA linha
+        const chave = l.semAnalise ? `${cat}::${l.nome}` : `${l.grupo}::${normCatKey(l.nome)}`;
+        const existente = lista.find((x) => x.chave === chave);
+        if (existente) {
+          existente.ids = [...new Set([...existente.ids, ...l.ids])];
+          existente.tickets = [...existente.tickets, ...l.tickets.filter((t) => !existente.tickets.includes(t))];
+          if (!existente.categoria.split(", ").includes(cat)) existente.categoria += `, ${cat}`;
+          if (!existente.motivo && l.motivo) existente.motivo = l.motivo;
+          if (!existente.sugestao && l.sugestao) existente.sugestao = l.sugestao;
+        } else {
+          lista.push({ ...l, chave });
+        }
       });
     });
     const grupos = GRUPOS_REINCIDENCIA.filter((g) => porGrupo.has(g)).map((nome) => {
-      const linhas = porGrupo.get(nome).sort((a, b) => (!!a.semAnalise - !!b.semAnalise) || (b.qtd - a.qtd));
-      const ids = [...new Set(linhas.flatMap((l) => l.ids))].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
-      return { nome, linhas, ids, qtd: ids.length };
+      const linhas = porGrupo.get(nome);
+      linhas.forEach((l) => {
+        l.ids = [...l.ids].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+        l.qtd = l.ids.length;
+        l.nivel = nivelDe(nome, l.nome);
+      });
+      linhas.sort((a, b) => ((a.nivel?.ordem ?? 9) - (b.nivel?.ordem ?? 9)) || (!!a.semAnalise - !!b.semAnalise) || (b.qtd - a.qtd));
+      const ordena = (lista) => [...new Set(lista)].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+      const ids = ordena(linhas.flatMap((l) => l.ids));
+      // Subníveis (só Correção de Campo): totais de cada um
+      const niveis = {};
+      linhas.filter((l) => l.nivel).forEach((l) => {
+        const n = (niveis[l.nivel.titulo] = niveis[l.nivel.titulo] || { ids: [] });
+        n.ids = ordena([...n.ids, ...l.ids]);
+        n.qtd = n.ids.length;
+      });
+      return { nome, linhas, ids, qtd: ids.length, niveis };
     });
     const total = grupos.reduce((acc, g) => acc + g.qtd, 0);
     return { grupos, total };
@@ -1906,7 +1972,7 @@ function DashboardApp() {
     try {
       await exportarExcel({
         grupos: tabela.grupos, total: tabela.total, periodoLabel,
-        nomeAba: `Reincidências ${periodoLabel.replace(/\/\d{4}/g, "").replace(/\//g, "-")}`,
+        nomeAba: periodoMes ? `Reincidências ${periodoMes.nome}` : `Reincidências ${periodoLabel.replace(/\/\d{4}/g, "").replace(/\//g, "-")}`,
         nomeArquivo: `reincidencia_${periodoLabel.replace(/\//g, "-").replace(/\s+/g, "_")}.xlsx`,
       });
     } catch (e) {
@@ -1914,7 +1980,7 @@ function DashboardApp() {
     } finally {
       setExportandoExcel(false);
     }
-  }, [tabela, periodoLabel, toast]);
+  }, [tabela, periodoLabel, periodoMes, toast]);
 
   // ── Ações ────────────────────────────────────────────────────────────────────
 
@@ -2174,7 +2240,9 @@ function DashboardApp() {
 
     // Rótulo do período
     let periodoLabel = "Todo o histórico";
-    if (periodDays < 9999 && anchor) {
+    if (periodoMes) {
+      periodoLabel = `${periodoMes.nome} de ${periodoMes.ano}`;
+    } else if (periodDays < 9999 && anchor) {
       const ini = new Date(anchor); ini.setDate(ini.getDate() - periodDays);
       periodoLabel = `Últimos ${periodDays} dias (${fmt(ini)} a ${fmt(anchor)})`;
     }
@@ -2305,7 +2373,7 @@ function DashboardApp() {
       toast({ title: "Pop-up bloqueado", description: "Permita pop-ups para este site e tente novamente.", status: "warning", duration: 5000 });
     }
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  }, [periodData, periodDays, anchor, filters, analyses, analysesNorm, toast]);
+  }, [periodData, periodDays, periodoMes, anchor, filters, analyses, analysesNorm, toast]);
 
   const handleFilterChange = useCallback((key, value) => setFilters((f) => ({ ...f, [key]: value })), []);
   const handleFilterReset  = useCallback(() => setFilters(INITIAL_FILTERS), []);
@@ -2494,10 +2562,11 @@ function DashboardApp() {
           activeMode={activeMode}
           onModeChange={handleModeChange}
           systems={SYSTEMS}
+          meses={mesesDisponiveis}
         />
 
         <SimpleGrid columns={{ base: 2, md: 4 }} spacing="4" mb="6">
-          <StatCard label={periodDays >= 9999 ? "Chamados (todo o histórico)" : `Chamados (${periodDays} dias)`} value={totalTickets.toLocaleString("pt-BR")} color="navy" />
+          <StatCard label={periodoMes ? `Chamados (${periodoMes.nome.toLowerCase()})` : periodDays >= 9999 ? "Chamados (todo o histórico)" : `Chamados (${periodDays} dias)`} value={totalTickets.toLocaleString("pt-BR")} color="navy" />
           <StatCard label="Últimos 30 dias" value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="brand" />
           <StatCard label="Categorias" value={filteredCards.length} color="navy" />
           <StatCard label="Com análise da IA" value={`${analysedCount} de ${filteredCards.length}`} color="navy" />
