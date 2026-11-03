@@ -623,3 +623,45 @@ export function classificarLinhas(rows, { mode, colDate = 0, colComment = 1, col
   });
   return tickets;
 }
+
+// ── Grupos da tabela de reincidência (mesmos da planilha manual) ───────────────
+// Cada subtipo da análise da IA pertence a um destes grupos. A IA informa o
+// grupo; quando não informa (análises antigas) ou informa um nome fora da lista,
+// grupoPadrao() deduz pelo nome do subtipo e pela categoria.
+export const GRUPOS_REINCIDENCIA = [
+  "SCI",
+  "Candidato SOI",
+  "SOI",
+  "Mudança de Stage/Fluxo",
+  "Correção de Campo",
+  "Detentora/Vendor",
+  "Problemas Técnicos/Sistema",
+  "Outros",
+];
+
+const GRUPO_POR_CATEGORIA = {
+  "SCI/FCU": "SCI", "SCI": "SCI", "VALOR FCU": "SCI", "CANCELAR FCU": "SCI", "E-MAIL": "SCI",
+  "STAGE SCI": "Mudança de Stage/Fluxo", "PERMISSÃO/BOTÃO": "Mudança de Stage/Fluxo",
+  "CANDIDATO": "Candidato SOI", "REJEITAR": "Candidato SOI", "REGREDIR CANDIDATO": "Candidato SOI", "CANCELAR CANDIDATO": "Candidato SOI",
+  "SOI": "SOI", "STATUS SOI": "SOI", "CANCELAR SOI": "SOI", "NOME SOI": "SOI", "ID MASTER": "SOI",
+  "ALTERAÇÃO DE CAMPO": "Correção de Campo", "DISTRITO/MUNICÍPIO": "Correção de Campo", "ALTURA": "Correção de Campo",
+  "CARACTERE ESPECIAL": "Correção de Campo", "OMNI": "Correção de Campo",
+  "DETENTORA": "Detentora/Vendor", "VENDOR": "Detentora/Vendor", "CANCELAR VENDOR": "Detentora/Vendor",
+  "FRACTAL": "Problemas Técnicos/Sistema", "CONECTA": "Problemas Técnicos/Sistema", "VIVO GO": "Problemas Técnicos/Sistema",
+  "INSTABILIDADE": "Problemas Técnicos/Sistema", "RPA": "Problemas Técnicos/Sistema", "LIMITE DE CAMPO": "Problemas Técnicos/Sistema",
+  "ANEXO/UPLOAD": "Problemas Técnicos/Sistema", "EMPRESA DUPLICADA": "Problemas Técnicos/Sistema",
+};
+
+export function grupoPadrao(categoria, nomeSubtipo = "") {
+  const n = ` ${normText(nomeSubtipo)} `;
+  if (/^ (campo|correcao) /.test(n)) return "Correção de Campo";
+  if (/ (stage|regressao|regredir) /.test(n)) return "Mudança de Stage/Fluxo";
+  return GRUPO_POR_CATEGORIA[String(categoria || "").toUpperCase().trim()] || "Outros";
+}
+
+// Grupo de um subtipo: o que a IA informou (se for válido) ou o deduzido
+export function resolverGrupo(subtipo, categoria) {
+  const g = String(subtipo?.grupo || "").trim();
+  const valido = GRUPOS_REINCIDENCIA.find((x) => normText(x) === normText(g));
+  return valido || grupoPadrao(categoria, subtipo?.nome);
+}
