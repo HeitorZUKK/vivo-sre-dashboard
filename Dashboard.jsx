@@ -12,7 +12,7 @@ import {
   Alert, AlertIcon, AlertDescription, SimpleGrid, Card,
   CardHeader, CardBody, CardFooter,
   FormControl, FormLabel,
-  Menu, MenuButton, MenuList, MenuItem, MenuDivider,
+  Menu, MenuButton, MenuList, MenuItem, MenuDivider, ButtonGroup,
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
 import {
@@ -20,7 +20,7 @@ import {
   GRUPOS_REINCIDENCIA, resolverGrupo, grupoPadrao,
 } from "./classificacao.js";
 import Painel from "./Painel.jsx";
-import TabelaReincidencia, { exportarExcel, nivelDe } from "./Tabela.jsx";
+import TabelaReincidencia, { exportarExcel, nivelDe, CORES_GRUPO, DESCRICAO_GRUPO, pct as pctTexto } from "./Tabela.jsx";
 
 // =============================================================================
 // SEÇÃO 1 — CONFIGURAÇÃO
@@ -1176,7 +1176,8 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
 // ── AnalysisCard ──────────────────────────────────────────────────────────────
 
-function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading, anchor, periodDays }) {
+function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading, anchor, periodDays,
+  descricaoFixa, corDestaque, subtitulo, semTendencia }) {
   const bg           = useColorModeValue("white", "gray.800");
   const borderColor  = useColorModeValue("gray.200", "gray.700");
   const statBg       = useColorModeValue("gray.50", "gray.700");
@@ -1227,7 +1228,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
   const subgruposTexto = useMemo(() => calcularSubgrupos(categoryData.tickets), [categoryData.tickets]);
   const subgrupos = subgruposIA || subgruposTexto;
-  const descricao = getCategoryDescription(categoryName);
+  const descricao = descricaoFixa || getCategoryDescription(categoryName);
 
   // Tickets do período filtrados pelo subgrupo selecionado (se houver).
   const visibleTickets = useMemo(() => {
@@ -1277,12 +1278,14 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
 
   return (
     <Card bg={bg} borderWidth="1px" borderColor={borderColor} borderRadius="xl" shadow="sm"
-      overflow="hidden" h="100%" display="flex" flexDirection="column">
+      overflow="hidden" h="100%" display="flex" flexDirection="column"
+      borderTopWidth={corDestaque ? "4px" : "1px"} borderTopColor={corDestaque || borderColor}>
       <CardBody p="4" flex="1">
         {/* Nome + número do período */}
         <Flex justify="space-between" align="flex-start" gap="3">
           <Box minW="0">
             <Text fontWeight="700" fontSize="md" lineHeight="1.3" noOfLines={2}>{categoryName}</Text>
+            {subtitulo && <Text fontSize="xs" mt="1" color="gray.500">{subtitulo}</Text>}
             {delta && (
               <Text fontSize="xs" mt="1" color={delta.diff > 0 ? "red.500" : delta.diff < 0 ? "green.600" : "gray.500"}>
                 {delta.diff === 0
@@ -1314,7 +1317,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
             <Text fontSize="13px" color="gray.400">Sem análise</Text>
             {isLoading ? (
               <Spinner size="sm" color="brand.500" />
-            ) : (
+            ) : !onRequestAnalysis ? null : (
               <Menu>
                 <MenuButton as={Button} size="xs" variant="ghost" colorScheme="brand"
                   rightIcon={<IconChevron size={10} />}>
@@ -1430,14 +1433,17 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
               </Box>
             )}
 
-            <Chart
-              type="area"
-              height={200}
-              options={areaChartOptions(trend.map((t) => t.label), "Tendência mensal")}
-              series={[{ name: "Chamados", data: trend.map((t) => t.count) }]}
-            />
-
-            <Divider my="4" />
+            {!semTendencia && (
+              <>
+                <Chart
+                  type="area"
+                  height={200}
+                  options={areaChartOptions(trend.map((t) => t.label), "Tendência mensal")}
+                  series={[{ name: "Chamados", data: trend.map((t) => t.count) }]}
+                />
+                <Divider my="4" />
+              </>
+            )}
 
             <Flex justify="space-between" align="center" mb="3">
               <Text fontWeight="600" fontSize="sm">
@@ -1966,6 +1972,24 @@ function DashboardApp() {
   }, [filteredCards, filters.priority]);
 
   const [exportandoExcel, setExportandoExcel] = useState(false);
+  const [visaoReincidencia, setVisaoReincidencia] = useState("cartoes");
+
+  // Um cartão por grupo da tabela de reincidência (do maior para o menor):
+  // as subcategorias viram os subtipos do cartão, com causa raiz e sugestão.
+  const cartoesGrupo = useMemo(() => tabela.grupos.map((g) => {
+    const vistos = new Set();
+    const tickets = g.linhas.flatMap((l) => l.tickets).filter((t) => {
+      const id = String(t.id); if (vistos.has(id)) return false; vistos.add(id); return true;
+    });
+    const subcategorias = g.linhas.filter((l) => !l.semAnalise).map((l) => ({
+      nome: l.nome, motivo: l.motivo, sugestao: l.sugestao, prioridade: l.prioridade, ids: l.ids,
+    }));
+    const datas = Object.values(analyses).map((a) => a?.analisadoEm).filter(Boolean);
+    return {
+      nome: g.nome, qtd: g.qtd, tickets,
+      analysis: subcategorias.length ? { subcategorias, analisadoEm: datas[0], detailDays: 30 } : null,
+    };
+  }).sort((a, b) => b.qtd - a.qtd), [tabela, analyses]);
   const handleExportarExcel = useCallback(async () => {
     if (!tabela.grupos.length) return;
     setExportandoExcel(true);
@@ -2574,7 +2598,7 @@ function DashboardApp() {
 
         <Tabs colorScheme="brand" variant="soft-rounded" defaultIndex={0} isLazy>
           <TabList mb="5" bg={cardBg} p="1" borderRadius="xl" borderWidth="1px" borderColor={border} gap="1">
-            <Tab fontSize="sm" borderRadius="lg">Tabela de reincidência</Tab>
+            <Tab fontSize="sm" borderRadius="lg">Reincidência</Tab>
             <Tab fontSize="sm" borderRadius="lg">Visão geral</Tab>
             <Tab fontSize="sm" borderRadius="lg">Chamados por categoria</Tab>
             <Tab fontSize="sm" borderRadius="lg">Painel</Tab>
@@ -2584,7 +2608,48 @@ function DashboardApp() {
             <TabPanel px="0">
               {sheetLoading && !tabela.grupos.length ? (
                 <Box textAlign="center" py="16" color="gray.400"><Text>Carregando…</Text></Box>
+              ) : !tabela.grupos.length ? (
+                <Box textAlign="center" py="16" color="gray.400"><Text>Nenhum chamado no período com os filtros atuais.</Text></Box>
               ) : (
+                <>
+                  <Flex justify="space-between" align="center" mb="4" wrap="wrap" gap="3">
+                    <Box>
+                      <Text fontWeight="700" fontSize="md">Reincidências · {periodoLabel}</Text>
+                      <Text fontSize="sm" color="gray.500">
+                        {tabela.total} chamados em {tabela.grupos.length} grupos, do maior para o menor
+                      </Text>
+                    </Box>
+                    <HStack spacing="2">
+                      <ButtonGroup size="sm" isAttached variant="outline" colorScheme="brand">
+                        <Button onClick={() => setVisaoReincidencia("cartoes")}
+                          variant={visaoReincidencia === "cartoes" ? "solid" : "outline"}>Cartões</Button>
+                        <Button onClick={() => setVisaoReincidencia("tabela")}
+                          variant={visaoReincidencia === "tabela" ? "solid" : "outline"}>Tabela</Button>
+                      </ButtonGroup>
+                      <Button size="sm" colorScheme="brand" variant="outline" onClick={handleExportarExcel}
+                        isLoading={exportandoExcel} loadingText="Gerando">Exportar Excel</Button>
+                    </HStack>
+                  </Flex>
+                  {visaoReincidencia === "cartoes" ? (
+                    <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing="4">
+                      {cartoesGrupo.map((g) => (
+                        <AnalysisCard
+                          key={g.nome}
+                          systemName={activeMode}
+                          categoryName={g.nome}
+                          categoryData={{ tickets: g.tickets }}
+                          fullTickets={g.tickets}
+                          analysis={g.analysis}
+                          anchor={anchor}
+                          periodDays={9999}
+                          descricaoFixa={DESCRICAO_GRUPO[g.nome]}
+                          corDestaque={(CORES_GRUPO[g.nome] || CORES_GRUPO["Outros / Diversos"])[0]}
+                          subtitulo={`${pctTexto(g.qtd, tabela.total).replace(".", ",")} dos chamados`}
+                          semTendencia
+                        />
+                      ))}
+                    </SimpleGrid>
+                  ) : (
                 <TabelaReincidencia
                   grupos={tabela.grupos}
                   total={tabela.total}
@@ -2593,6 +2658,8 @@ function DashboardApp() {
                   onExportar={handleExportarExcel}
                   exportando={exportandoExcel}
                 />
+                  )}
+                </>
               )}
             </TabPanel>
 

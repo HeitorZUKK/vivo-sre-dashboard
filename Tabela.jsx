@@ -22,6 +22,20 @@ export const CORES_GRUPO = {
   "Falta de Retorno":           ["#C62828", "#D32F2F", "#FFFFFF"],
   "Outros / Diversos":          ["#78909C", "#B0BEC5", "#FFFFFF"],
 };
+// O que cada grupo reúne (aparece na janela de detalhes do cartão)
+export const DESCRICAO_GRUPO = {
+  "SCI":                        "Defeitos e regras do módulo SCI/FCU: cancelamento, grupo de processo, status gravado.",
+  "Candidato SOI":              "Defeitos e regras do candidato da SOI: etapas, barra de ações, tokens do Camunda.",
+  "SOI":                        "Defeitos e regras do módulo SOI: processo, sigla, modalidades, acionamento de vendor.",
+  "Mudança de Stage/Fluxo":     "Voltar ou avançar etapa e botão indisponível porque a etapa é de outro grupo.",
+  "Correção de Campo":          "Dados corrigidos na base: valor rejeitado pelo sistema ou campo que o cliente não consegue editar.",
+  "OMNI":                       "Deleção de linhas e campos do Omni.",
+  "Detentora/Vendor":           "Sigla e troca de vendor, ID detentora.",
+  "Problemas Técnicos/Sistema": "Incidentes, indisponibilidade, integração, certificado e deploy (Fractal, Conecta, Vivo GO).",
+  "Falta de Retorno":           "Chamados encerrados sem resposta do solicitante.",
+  "Outros / Diversos":          "Consultas, orientações, pedidos já atendidos, fora de escopo e extração de dados.",
+};
+
 const COR_CABECALHO = "#1565C0";
 const COR_LINHA     = "#EEF2FF";
 
