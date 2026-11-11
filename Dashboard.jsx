@@ -996,10 +996,10 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
   }
 
   const label = selected.length === 0
-    ? "Todas as categorias"
+    ? "Todos os grupos"
     : selected.length === 1
       ? selected[0].length > 30 ? selected[0].substring(0, 30) + "…" : selected[0]
-      : `${selected.length} categorias`;
+      : `${selected.length} grupos`;
 
   return (
     <Box position="relative" ref={ref}>
@@ -1028,7 +1028,7 @@ function CategoryMultiSelect({ allCategories, selected, onChange }) {
           <Box px="3" pt="2" pb="1" borderBottomWidth="1px" borderColor={border}>
             <input
               autoFocus
-              placeholder="Buscar categoria..."
+              placeholder="Buscar grupo..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{
@@ -1139,7 +1139,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 
         <FormControl>
           <FormLabel fontSize="xs" color="gray.500">
-            Categoria
+            Grupo
             {filters.categories.length > 0 && (
               <Badge ml="2" colorScheme="brand" borderRadius="full" fontSize="9px">
                 {filters.categories.length} selecionadas
@@ -1555,71 +1555,81 @@ function encurtar(txt, max) {
   return txt.length > max ? txt.substring(0, max - 1) + "…" : txt;
 }
 
-// Recebe os mesmos cartões da aba de categorias (período + categoria + prioridade).
+// Visão geral pelos GRUPOS da reincidência.
 // Barras e rosca: chamados do período. Tendência e mapa de calor: os 6 meses até
-// a data de referência, só das categorias que passaram nos filtros.
-function OverviewCharts({ cards, systems, refData }) {
-  const systemsToShow = systems.filter((s) => cards.some((c) => c.sys === s));
-  const volumeByCategory = useMemo(() => cards
-    .filter((c) => c.val.tickets.length > 0)
-    .map((c) => ({ name: encurtar(c.cat, 40), count: c.val.tickets.length }))
-    .sort((a, b) => b.count - a.count).slice(0, 12), [cards]);
+// a data de referência, no histórico já filtrado por grupo e prioridade — não
+// mudam quando só o período muda.
+function OverviewCharts({ periodo, historico, grupoDe, refData }) {
+  const porGrupo = useMemo(() => {
+    const cont = {};
+    Object.values(periodo).forEach((cats) => Object.entries(cats).forEach(([cat, v]) =>
+      v.tickets.forEach((t) => { const g = grupoDe(t, cat); cont[g] = (cont[g] || 0) + 1; })));
+    return GRUPOS_REINCIDENCIA.filter((g) => cont[g]).map((g) => ({ name: g, count: cont[g] }))
+      .sort((a, b) => b.count - a.count);
+  }, [periodo, grupoDe]);
 
-  const trendBySys = useMemo(() => {
-    const months = mesesAte(refData);
-    const fimUltimo = new Date(months[5].start.getFullYear(), months[5].start.getMonth() + 1, 1);
-    const labels = months.map((m) => m.label);
-    const series = systemsToShow.map((sys) => ({
-      name: sys,
-      data: months.map(({ start }, idx) => {
-        const end = months[idx + 1]?.start ?? fimUltimo;
-        return cards.filter((c) => c.sys === sys).reduce(
-          (acc, c) => acc + c.fullVal.tickets.filter((t) => t.date >= start && t.date < end).length, 0);
-      }),
-    }));
-    return { labels, series };
-  }, [cards, systemsToShow, refData]);
+  const meses = useMemo(() => {
+    const m = mesesAte(refData);
+    const fimUltimo = new Date(m[5].start.getFullYear(), m[5].start.getMonth() + 1, 1);
+    return m.map((x, i) => ({ ...x, end: m[i + 1]?.start ?? fimUltimo }));
+  }, [refData]);
 
-  const donutData = useMemo(() => {
-    const sorted = cards.filter((c) => c.val.tickets.length > 0)
-      .map((c) => [c.cat, c.val.tickets.length]).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    return { labels: sorted.map(([k]) => encurtar(k, 30)), values: sorted.map(([, v]) => v) };
-  }, [cards]);
+  // grupo × mês, no histórico
+  const grade = useMemo(() => {
+    const cont = {};
+    Object.values(historico).forEach((cats) => Object.entries(cats).forEach(([cat, v]) =>
+      v.tickets.forEach((t) => {
+        const i = meses.findIndex((m) => t.date >= m.start && t.date < m.end);
+        if (i === -1) return;
+        const g = grupoDe(t, cat);
+        cont[g] = cont[g] || Array(6).fill(0);
+        cont[g][i]++;
+      })));
+    return cont;
+  }, [historico, meses, grupoDe]);
+
+  const total = meses.map((_, i) => Object.values(grade).reduce((acc, arr) => acc + arr[i], 0));
+  const labels = meses.map((m) => m.label);
+  const gruposGrade = GRUPOS_REINCIDENCIA.filter((g) => grade[g]).reverse();
+  const cores = porGrupo.map((g) => (CORES_GRUPO[g.name] || CORES_GRUPO["Outros / Diversos"])[0]);
 
   return (
     <SimpleGrid columns={{ base: 1, lg: 2 }} spacing="6" mb="6">
       <Box>
         <Chart
-          key={volumeByCategory.map((x) => x.name).join("|")}
+          key={porGrupo.map((x) => x.name).join("|")}
           type="bar"
-          height={Math.max(250, volumeByCategory.length * 35)}
-          options={barChartOptions(volumeByCategory.map((x) => x.name), "Categorias com mais chamados no período")}
-          series={[{ name: "Chamados", data: volumeByCategory.map((x) => x.count) }]}
+          height={Math.max(250, porGrupo.length * 38)}
+          options={{ ...barChartOptions(porGrupo.map((x) => x.name), "Grupos com mais chamados no período"),
+            colors: cores, plotOptions: { bar: { horizontal: true, borderRadius: 4, distributed: true } }, legend: { show: false } }}
+          series={[{ name: "Chamados", data: porGrupo.map((x) => x.count) }]}
         />
       </Box>
       <Box>
         <Chart
+          key={`tend-${labels.join("|")}`}
           type="area"
           height={300}
-          options={areaChartOptions(trendBySys.labels, "Tendência mensal por sistema")}
-          series={trendBySys.series}
+          options={areaChartOptions(labels, "Tendência mensal (6 meses, todos os chamados filtrados)")}
+          series={[{ name: "Chamados", data: total }]}
         />
       </Box>
       <Box>
         <Chart
-          key={donutData.labels.join("|")}
+          key={`rosca-${porGrupo.map((x) => x.name).join("|")}`}
           type="donut"
-          height={300}
-          options={donutChartOptions(donutData.labels, "Distribuição por categoria")}
-          series={donutData.values}
+          height={320}
+          options={{ ...donutChartOptions(porGrupo.map((x) => x.name), "Distribuição por grupo no período"), colors: cores }}
+          series={porGrupo.map((x) => x.count)}
         />
       </Box>
       <Box>
         <Chart
+          key={`calor-${gruposGrade.join("|")}-${labels.join("|")}`}
           type="heatmap"
-          height={300}
-          options={heatmapChartOptions(trendBySys.labels, "Volume por sistema × mês (6 meses)")}
-          series={trendBySys.series}
+          height={Math.max(300, gruposGrade.length * 34 + 80)}
+          options={heatmapChartOptions(labels, "Volume por grupo × mês (6 meses)")}
+          series={gruposGrade.map((g) => ({ name: g, data: grade[g] }))}
         />
       </Box>
     </SimpleGrid>
@@ -1713,6 +1723,7 @@ function DashboardApp() {
   const [failedCats,      setFailedCats]      = useState([]);    // categorias que falharam na última análise em lote
   const [filters,         setFilters]         = useState(INITIAL_FILTERS);
   const [publishing,      setPublishing]      = useState(false); // publicando análise compartilhada
+  const [pedidoPublicar,  setPedidoPublicar]  = useState(0);     // sobe a cada análise nova feita no site
   const [sharedUpdatedAt, setSharedUpdatedAt] = useState(null);  // quando a análise compartilhada foi atualizada
 
   const toast  = useToast();
@@ -1765,10 +1776,53 @@ function DashboardApp() {
     return maisRecente;
   }, [data]);
 
+  // Grupo, subtipo e prioridade de cada chamado, vindos da análise da IA publicada.
+  // Chamado ainda sem análise: grupo deduzido pela categoria, sem prioridade.
+  const infoChamado = useMemo(() => {
+    const mapa = new Map();
+    Object.entries(analyses).forEach(([key, an]) => {
+      if (!key.startsWith(`${activeSystem}::`)) return;
+      const cat = key.slice(activeSystem.length + 2);
+      subtiposUnicos(an?.subcategorias).forEach((sub) => {
+        const grupo = resolverGrupo(sub, cat);
+        sub.ids.forEach((id) => mapa.set(id, { grupo, subtipo: sub.nome, prioridade: sub.prioridade || null }));
+      });
+    });
+    return mapa;
+  }, [analyses, activeSystem]);
+
+  const grupoDoChamado = useCallback(
+    (t, cat) => infoChamado.get(String(t.id).replace("#", "").trim())?.grupo || grupoPadrao(cat),
+    [infoChamado]
+  );
+
+  // Base de TODO o site: os chamados que passam no filtro de grupo e de prioridade,
+  // no histórico inteiro. O período é aplicado depois (periodData), então as
+  // tendências mensais não mudam quando só o período muda.
+  const dadosFiltrados = useMemo(() => {
+    const grupos = filters.categories;
+    if (!grupos.length && !filters.priority) return data;
+    const out = {};
+    Object.entries(data).forEach(([sys, cats]) => {
+      Object.entries(cats).forEach(([cat, val]) => {
+        const tickets = val.tickets.filter((t) => {
+          if (grupos.length && !grupos.includes(grupoDoChamado(t, cat))) return false;
+          if (filters.priority && infoChamado.get(String(t.id).replace("#", "").trim())?.prioridade !== filters.priority) return false;
+          return true;
+        });
+        if (tickets.length) {
+          if (!out[sys]) out[sys] = {};
+          out[sys][cat] = { ...val, tickets };
+        }
+      });
+    });
+    return out;
+  }, [data, filters.categories, filters.priority, grupoDoChamado, infoChamado]);
+
   const periodData = useMemo(() => {
     if (periodoMes) {
       const filtered = {};
-      Object.entries(data).forEach(([sys, cats]) => {
+      Object.entries(dadosFiltrados).forEach(([sys, cats]) => {
         Object.entries(cats).forEach(([cat, val]) => {
           const tickets = val.tickets.filter((t) => t.date >= periodoMes.inicio && t.date < periodoMes.fim);
           if (tickets.length > 0) {
@@ -1780,7 +1834,7 @@ function DashboardApp() {
       return filtered;
     }
     // "Todo o histórico" (9999) — não filtra nada
-    if (periodDays >= 9999) return data;
+    if (periodDays >= 9999) return dadosFiltrados;
     const maisRecente = anchor;
     if (!maisRecente) return {};
 
@@ -1788,7 +1842,7 @@ function DashboardApp() {
     cutoff.setDate(cutoff.getDate() - periodDays);
 
     const filtered = {};
-    Object.entries(data).forEach(([sys, cats]) => {
+    Object.entries(dadosFiltrados).forEach(([sys, cats]) => {
       Object.entries(cats).forEach(([cat, val]) => {
         const tickets = val.tickets.filter((t) => t.date >= cutoff);
         if (tickets.length > 0) {
@@ -1798,7 +1852,7 @@ function DashboardApp() {
       });
     });
     return filtered;
-  }, [data, periodDays, anchor, periodoMes]);
+  }, [dadosFiltrados, periodDays, anchor, periodoMes]);
 
   // Meses com chamados na planilha (do mais recente para o mais antigo, até 12)
   const mesesDisponiveis = useMemo(() => {
@@ -1813,11 +1867,13 @@ function DashboardApp() {
     });
   }, [data]);
 
+  // Opções do filtro: os grupos da reincidência que têm chamados
   const allCategories = useMemo(() => {
-    const cats = new Set();
-    Object.values(periodData).forEach((sys) => Object.keys(sys).forEach((c) => cats.add(c)));
-    return [...cats].sort();
-  }, [periodData]);
+    const vistos = new Set();
+    Object.values(data).forEach((cats) => Object.entries(cats).forEach(([cat, v]) =>
+      v.tickets.forEach((t) => vistos.add(grupoDoChamado(t, cat)))));
+    return GRUPOS_REINCIDENCIA.filter((g) => vistos.has(g));
+  }, [data, grupoDoChamado]);
 
   // Índice das análises por chave NORMALIZADA — permite casar a análise publicada
   // pelo script (nomes em maiúsculas, com descrição) com o card do dashboard,
@@ -1837,24 +1893,18 @@ function DashboardApp() {
     filteredSystems.forEach((sys) => {
       if (!periodData[sys]) return;
       Object.entries(periodData[sys]).forEach(([cat, val]) => {
-        if (filters.categories.length > 0 && !filters.categories.includes(cat)) return;
         const key      = `${sys}::${cat}`;
         // Busca a análise: primeiro exata, depois por nome normalizado (casa com o script)
         const analysis = analyses[key] || analysesNorm[`${sys}::${normCatKey(cat)}`];
-        if (filters.priority) {
-          const temPrioridade = analysis?.prioridade === filters.priority ||
-            subtiposNoPeriodo(analysis?.subcategorias, val.tickets).some((sub) => sub.prioridade === filters.priority);
-          if (!temPrioridade) return;
-        }
         // fullVal = histórico completo da categoria (do `data`, não do periodData filtrado).
         // Usado para as janelas 30/60/90 do card, que devem sempre refletir o histórico.
-        const fullVal = data[sys]?.[cat] || val;
+        const fullVal = dadosFiltrados[sys]?.[cat] || val;
         cards.push({ sys, cat, val, fullVal, key, analysis });
       });
     });
     // Ordena do maior para o menor volume de chamados
     return cards.sort((a, b) => b.val.tickets.length - a.val.tickets.length);
-  }, [periodData, data, filteredSystems, filters, analyses, analysesNorm]);
+  }, [periodData, dadosFiltrados, filteredSystems, analyses, analysesNorm]);
 
   // Contagens do topo: os mesmos cartões filtrados (período + categoria + prioridade)
   const totalTickets = useMemo(
@@ -1877,12 +1927,9 @@ function DashboardApp() {
     const c60 = new Date(anchor); c60.setDate(c60.getDate() - 60);
     // Categorias e prioridade seguem o filtro; os 30 dias são sempre os 30 dias
     // até o chamado mais recente (é o que o card diz)
-    const catsFiltro = filters.categories;
     let current = 0, previous = 0;
     filteredSystems.forEach((s) => {
-      Object.entries(data[s] || {}).forEach(([cat, v]) => {
-        if (catsFiltro.length > 0 && !catsFiltro.includes(cat)) return;
-        if (filters.priority && !filteredCards.some((c) => c.sys === s && c.cat === cat)) return;
+      Object.values(dadosFiltrados[s] || {}).forEach((v) => {
         v.tickets.forEach((t) => {
           if (t.date >= c30) current++;
           else if (t.date >= c60) previous++;
@@ -1890,12 +1937,17 @@ function DashboardApp() {
       });
     });
     return { count: current, delta: percentChange(current, previous) };
-  }, [data, filteredSystems, anchor, filters.categories, filters.priority, filteredCards]);
+  }, [dadosFiltrados, filteredSystems, anchor]);
 
   const analysedCount = useMemo(
     () => filteredCards.filter((c) => c.analysis).length,
     [filteredCards]
   );
+
+  // Chamados do período que já estão em algum subtipo da análise da IA
+  const chamadosAnalisados = useMemo(() => filteredCards.reduce((acc, c) =>
+    acc + c.val.tickets.filter((t) => infoChamado.has(String(t.id).replace("#", "").trim())).length, 0),
+  [filteredCards, infoChamado]);
 
   // ── Tabela de reincidência (formato da planilha manual) ─────────────────────
   // Grupo → subtipo da análise da IA, só com os chamados do período e dos filtros.
@@ -2089,6 +2141,7 @@ function DashboardApp() {
           subcategorias: subs,
         };
         setAnalyses((prev) => ({ ...prev, [key]: analysis }));
+        if (!mockMode) setPedidoPublicar((n) => n + 1); // publica sozinho para todos
         toast({ title: "Análise detalhada concluída", description: `${subs.length} subtipos em "${categoryName.substring(0, 35)}…" (${detailDays}d)`, status: "success", duration: 3500 });
       } else {
         toast({ title: "Nenhum subtipo identificado", description: "A IA não conseguiu detalhar esta categoria.", status: "warning", duration: 4000 });
@@ -2114,7 +2167,7 @@ function DashboardApp() {
       const period = detailDays; // análise detalhada usa a janela escolhida (7 ou 30)
 
       const isRetry      = Array.isArray(onlyThese) && onlyThese.length > 0;
-      const selectedCats = filters.categories; // [] = todas, [x,y] = apenas essas
+      const selectedCats = []; // o filtro da tela é por grupo; a análise roda por categoria
 
       // Filtra pelo período, pelas categorias do filtro, e pula as já analisadas.
       // No modo "repetir falhas", considera apenas as categorias informadas.
@@ -2228,6 +2281,7 @@ function DashboardApp() {
 
       setFailedCats(falharam);
       setLastDetailDays(detailDays); // guarda para o botão "Repetir falhas"
+      if (totalAnalysed > 0 && !mockMode) setPedidoPublicar((n) => n + 1); // publica sozinho para todos
 
       toast({
         title:       "Análise em lote concluída!",
@@ -2242,15 +2296,14 @@ function DashboardApp() {
     } finally {
       setBulkLoading(false);
     }
-  }, [data, filters.system, filters.categories, analyses, mockMode, activeMode, toast]);
+  }, [data, filters.system, analyses, mockMode, activeMode, toast]);
 
   // Gera um relatório HTML (para imprimir/salvar em PDF) que segue os FILTROS
   // da tela: período, categorias selecionadas e prioridade.
   const downloadReport = useCallback(() => {
     const sys = filters.system;
     const catsPeriodo = periodData[sys] || {};
-    const nomes = Object.keys(catsPeriodo)
-      .filter((n) => filters.categories.length === 0 || filters.categories.includes(n));
+    const nomes = Object.keys(catsPeriodo); // grupo e prioridade já filtrados na base
 
     if (nomes.length === 0) {
       toast({ title: "Nada para exportar", description: "Não há chamados com os filtros atuais.", status: "warning", duration: 4000 });
@@ -2330,7 +2383,7 @@ function DashboardApp() {
     const filtrosLabel = [
       `Sistema: ${esc(sys)}`,
       `Período: ${esc(periodoLabel)}`,
-      filters.categories.length ? `Categorias: ${filters.categories.map(esc).join(", ")}` : "Todas as categorias",
+      filters.categories.length ? `Grupos: ${filters.categories.map(esc).join(", ")}` : "Todos os grupos",
       filters.priority ? `Prioridade: ${esc(filters.priority)}` : null,
     ].filter(Boolean).join(" · ");
 
@@ -2439,12 +2492,33 @@ function DashboardApp() {
     toast({ title: "Análises limpas", description: `As análises de ${MODE_CONFIG[activeMode]?.label} foram removidas.`, status: "info", duration: 3000 });
   }, [activeMode, toast]);
 
-  // Publica as análises atuais no banco compartilhado — todos passam a ver estas.
+  // Publicação AUTOMÁTICA: toda análise nova feita pelo site é publicada para
+  // todos assim que termina (não há mais botão). O modo de teste não publica.
+  // O script semanal publica sozinho do mesmo jeito.
+  useEffect(() => {
+    if (pedidoPublicar === 0 || Object.keys(analyses).length === 0) return;
+    let cancelado = false;
+    (async () => {
+      setPublishing(true);
+      try {
+        const r = await publishSharedAnalyses(activeMode, analyses);
+        if (cancelado) return;
+        setSharedUpdatedAt(r.atualizadoEm);
+        toast({ title: "Análise publicada para todos", description: `${r.qtd} categorias visíveis em ${MODE_CONFIG[activeMode]?.label}.`, status: "success", duration: 3500 });
+      } catch (e) {
+        if (!cancelado) toast({ title: "Não foi possível publicar a análise", description: String(e.message), status: "error", duration: 6000 });
+      } finally {
+        if (!cancelado) setPublishing(false);
+      }
+    })();
+    return () => { cancelado = true; };
+    // só dispara quando uma análise nova termina
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidoPublicar]);
+
+  // (mantido para uso interno; não aparece mais no menu)
   const handlePublishAnalyses = useCallback(async () => {
-    if (Object.keys(analyses).length === 0) {
-      toast({ title: "Nada para publicar", description: "Gere ao menos uma análise antes de publicar.", status: "warning", duration: 3000 });
-      return;
-    }
+    if (Object.keys(analyses).length === 0) return;
     setPublishing(true);
     try {
       const r = await publishSharedAnalyses(activeMode, analyses);
@@ -2522,9 +2596,6 @@ function DashboardApp() {
                   </MenuItem>
                 )}
                 <MenuDivider />
-                <MenuItem isDisabled={Object.keys(analyses).length === 0} onClick={handlePublishAnalyses}>
-                  Publicar análise para todos
-                </MenuItem>
                 <MenuItem isDisabled={Object.keys(analyses).length === 0} onClick={handleClearAnalyses} color="red.500">
                   Limpar análises deste navegador
                 </MenuItem>
@@ -2590,8 +2661,8 @@ function DashboardApp() {
         <SimpleGrid columns={{ base: 2, md: 4 }} spacing="4" mb="6">
           <StatCard label={periodoMes ? `Chamados (${periodoMes.nome.toLowerCase()})` : periodDays >= 9999 ? "Chamados (todo o histórico)" : `Chamados (${periodDays} dias)`} value={totalTickets.toLocaleString("pt-BR")} color="navy" />
           <StatCard label="Últimos 30 dias" value={tickets30.count.toLocaleString("pt-BR")} delta={tickets30.delta} color="brand" />
-          <StatCard label="Categorias" value={filteredCards.length} color="navy" />
-          <StatCard label="Com análise da IA" value={`${analysedCount} de ${filteredCards.length}`} color="navy" />
+          <StatCard label="Grupos" value={tabela.grupos.length} color="navy" />
+          <StatCard label="Chamados com análise da IA" value={`${chamadosAnalisados} de ${totalTickets}`} color="navy" />
         </SimpleGrid>
 
         <Tabs colorScheme="brand" variant="soft-rounded" defaultIndex={0} isLazy>
@@ -2662,7 +2733,7 @@ function DashboardApp() {
             </TabPanel>
 
             <TabPanel px="0">
-              <OverviewCharts cards={filteredCards} systems={SYSTEMS} refData={refTendencia} />
+              <OverviewCharts periodo={periodData} historico={dadosFiltrados} grupoDe={grupoDoChamado} refData={refTendencia} />
             </TabPanel>
 
             <TabPanel px="0">
