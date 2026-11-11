@@ -2669,7 +2669,6 @@ function DashboardApp() {
           <TabList mb="5" bg={cardBg} p="1" borderRadius="xl" borderWidth="1px" borderColor={border} gap="1">
             <Tab fontSize="sm" borderRadius="lg">Reincidência</Tab>
             <Tab fontSize="sm" borderRadius="lg">Visão geral</Tab>
-            <Tab fontSize="sm" borderRadius="lg">Chamados por categoria</Tab>
             <Tab fontSize="sm" borderRadius="lg">Painel</Tab>
           </TabList>
 
@@ -2734,45 +2733,6 @@ function DashboardApp() {
 
             <TabPanel px="0">
               <OverviewCharts periodo={periodData} historico={dadosFiltrados} grupoDe={grupoDoChamado} refData={refTendencia} />
-            </TabPanel>
-
-            <TabPanel px="0">
-              {filteredCards.length === 0 ? (
-                <Box textAlign="center" py="16" color="gray.400">
-                  <Text>{sheetLoading ? "Carregando…" : "Nenhuma categoria encontrada com os filtros atuais."}</Text>
-                </Box>
-              ) : (
-                <>
-                  <Flex justify="space-between" align="center" mb="4" wrap="wrap" gap="2">
-                    <Text fontSize="sm" color="gray.500">
-                      {filteredCards.length} categorias, da maior para a menor
-                    </Text>
-                    <HStack spacing="4" fontSize="xs" color="gray.500">
-                      <Text>Prioridade:</Text>
-                      {["Alta", "Média", "Baixa"].map((p) => (
-                        <HStack key={p} spacing="1.5"><PriorityDot priority={p} /><Text>{p}</Text></HStack>
-                      ))}
-                    </HStack>
-                  </Flex>
-                  <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing="4">
-                    {filteredCards.map(({ sys, cat, val, fullVal, key, analysis }) => (
-                      <AnalysisCard
-                        key={key}
-                        systemName={sys}
-                        categoryName={cat}
-                        categoryData={val}
-                        fullTickets={fullVal.tickets}
-                        analysis={analysis}
-                        anchor={anchor}
-                        periodDays={periodDays}
-                        refTendencia={refTendencia}
-                        isLoading={!!loadingKeys[key]}
-                        onRequestAnalysis={(dias) => requestAnalysis(sys, cat, dias)}
-                      />
-                    ))}
-                  </SimpleGrid>
-                </>
-              )}
             </TabPanel>
 
             <TabPanel px="0">
