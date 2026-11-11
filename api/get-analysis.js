@@ -9,10 +9,12 @@
 // =============================================================================
 
 import { Redis } from "@upstash/redis";
+import { autorizar } from "./_auth.js";
 
 const redis = Redis.fromEnv();
 
 export default async function handler(req, res) {
+  if (!autorizar(req, res)) return;
   const modo = req.query?.modo || "Fly";
 
   try {

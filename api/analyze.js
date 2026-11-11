@@ -19,6 +19,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { autorizar } from "./_auth.js";
 
 // Lê o arquivo de conhecimento do Fly (fly-knowledge.md) uma vez e guarda em cache.
 // Editar esse .md muda como a IA classifica, sem tocar no código do dashboard.
@@ -91,6 +92,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método não permitido. Use POST." });
   }
+  if (!autorizar(req, res)) return;
 
   const apiKey     = process.env.ANTHROPIC_API_KEY;
   const dailyLimit = parseInt(process.env.DAILY_TOKEN_LIMIT || "") || DEFAULT_DAILY_LIMIT;

@@ -12,6 +12,7 @@
 // =============================================================================
 
 import { Redis } from "@upstash/redis";
+import { autorizar } from "./_auth.js";
 
 const redis = Redis.fromEnv(); // usa KV_REST_API_URL e KV_REST_API_TOKEN do ambiente
 
@@ -19,6 +20,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método não permitido. Use POST." });
   }
+  if (!autorizar(req, res)) return;
 
   let body = req.body;
   if (typeof body === "string") {
