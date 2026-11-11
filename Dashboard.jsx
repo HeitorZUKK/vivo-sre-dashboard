@@ -793,14 +793,21 @@ RETORNE APENAS JSON PURO, SEM MARKDOWN, NESTE FORMATO EXATO:
 A "prioridade" deve ser exatamente "Alta", "Média" ou "Baixa" (Alta = muitos chamados ou bloqueia fluxo; Baixa = pontual).`;
 }
 
-function getMonthlyTrend(tickets) {
-  const now    = new Date();
-  const months = Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+// Últimos 6 meses terminando no mês de `ref` (o chamado mais recente da planilha
+// ou o mês escolhido no filtro), e não no mês de hoje.
+function mesesAte(ref) {
+  const base = ref || new Date();
+  return Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(base.getFullYear(), base.getMonth() - (5 - i), 1);
     return { label: d.toLocaleString("pt-BR", { month: "short" }), start: d };
   });
+}
+
+function getMonthlyTrend(tickets, ref) {
+  const months = mesesAte(ref);
+  const fimUltimo = new Date(months[5].start.getFullYear(), months[5].start.getMonth() + 1, 1);
   return months.map(({ label, start }, idx) => {
-    const end   = months[idx + 1]?.start ?? new Date();
+    const end   = months[idx + 1]?.start ?? fimUltimo;
     const count = tickets.filter((t) => t.date >= start && t.date < end).length;
     return { label, count };
   });
@@ -1177,7 +1184,7 @@ function FilterPanel({ filters, onChange, onReset, allCategories, activeMode, on
 // ── AnalysisCard ──────────────────────────────────────────────────────────────
 
 function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, analysis, onRequestAnalysis, isLoading, anchor, periodDays,
-  descricaoFixa, corDestaque, subtitulo, semTendencia }) {
+  descricaoFixa, corDestaque, subtitulo, semTendencia, refTendencia }) {
   const bg           = useColorModeValue("white", "gray.800");
   const borderColor  = useColorModeValue("gray.200", "gray.700");
   const statBg       = useColorModeValue("gray.50", "gray.700");
@@ -1253,7 +1260,7 @@ function AnalysisCard({ systemName, categoryName, categoryData, fullTickets, ana
     }
     return base.filter((t) => deduzirSubgrupo(t.description) === selectedSubgroup);
   }, [fullTickets, categoryData.tickets, selectedSubgroup, subgrupos, analysis]);
-  const trend            = getMonthlyTrend(trendTickets);
+  const trend            = getMonthlyTrend(trendTickets, refTendencia || anchor);
   const totalPages       = Math.ceil(visibleTickets.length / TICKETS_PER_PAGE);
   const paginatedTickets = visibleTickets.slice(
     ticketPage * TICKETS_PER_PAGE,
@@ -1548,64 +1555,45 @@ function encurtar(txt, max) {
   return txt.length > max ? txt.substring(0, max - 1) + "…" : txt;
 }
 
-function OverviewCharts({ data, systems }) {
-  const systemsToShow = systems.filter((s) => data[s]);
-
-  // Gráfico de barras: top categorias por volume total (histórico completo)
-  const volumeByCategory = useMemo(() => {
-    const result = [];
-    systemsToShow.forEach((sys) => {
-      if (!data[sys]) return;
-      Object.entries(data[sys]).forEach(([cat, val]) => {
-        if (val.tickets.length > 0)
-          result.push({ name: encurtar(cat, 40), count: val.tickets.length });
-      });
-    });
-    return result.sort((a, b) => b.count - a.count).slice(0, 12);
-  }, [data, systemsToShow]);
+// Recebe os mesmos cartões da aba de categorias (período + categoria + prioridade).
+// Barras e rosca: chamados do período. Tendência e mapa de calor: os 6 meses até
+// a data de referência, só das categorias que passaram nos filtros.
+function OverviewCharts({ cards, systems, refData }) {
+  const systemsToShow = systems.filter((s) => cards.some((c) => c.sys === s));
+  const volumeByCategory = useMemo(() => cards
+    .filter((c) => c.val.tickets.length > 0)
+    .map((c) => ({ name: encurtar(c.cat, 40), count: c.val.tickets.length }))
+    .sort((a, b) => b.count - a.count).slice(0, 12), [cards]);
 
   const trendBySys = useMemo(() => {
-    const now    = new Date();
-    const months = Array.from({ length: 6 }, (_, i) =>
-      new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
-    );
-    const labels = months.map((d) => d.toLocaleString("pt-BR", { month: "short" }));
+    const months = mesesAte(refData);
+    const fimUltimo = new Date(months[5].start.getFullYear(), months[5].start.getMonth() + 1, 1);
+    const labels = months.map((m) => m.label);
     const series = systemsToShow.map((sys) => ({
       name: sys,
-      data: months.map((start, idx) => {
-        const end = months[idx + 1] || new Date();
-        if (!data[sys]) return 0;
-        return Object.values(data[sys]).reduce(
-          (acc, v) => acc + v.tickets.filter((t) => t.date >= start && t.date < end).length,
-          0
-        );
+      data: months.map(({ start }, idx) => {
+        const end = months[idx + 1]?.start ?? fimUltimo;
+        return cards.filter((c) => c.sys === sys).reduce(
+          (acc, c) => acc + c.fullVal.tickets.filter((t) => t.date >= start && t.date < end).length, 0);
       }),
     }));
     return { labels, series };
-  }, [data, systemsToShow]);
+  }, [cards, systemsToShow, refData]);
 
   const donutData = useMemo(() => {
-    const cats = {};
-    systemsToShow.forEach((sys) => {
-      if (!data[sys]) return;
-      Object.entries(data[sys]).forEach(([cat, val]) => {
-        cats[cat] = (cats[cat] || 0) + val.tickets.length;
-      });
-    });
-    const sorted = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    return {
-      labels: sorted.map(([k]) => encurtar(k, 30)),
-      values: sorted.map(([, v]) => v),
-    };
-  }, [data, systemsToShow]);
+    const sorted = cards.filter((c) => c.val.tickets.length > 0)
+      .map((c) => [c.cat, c.val.tickets.length]).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    return { labels: sorted.map(([k]) => encurtar(k, 30)), values: sorted.map(([, v]) => v) };
+  }, [cards]);
 
   return (
     <SimpleGrid columns={{ base: 1, lg: 2 }} spacing="6" mb="6">
       <Box>
         <Chart
+          key={volumeByCategory.map((x) => x.name).join("|")}
           type="bar"
           height={Math.max(250, volumeByCategory.length * 35)}
-          options={barChartOptions(volumeByCategory.map((x) => x.name), "Categorias com mais chamados")}
+          options={barChartOptions(volumeByCategory.map((x) => x.name), "Categorias com mais chamados no período")}
           series={[{ name: "Chamados", data: volumeByCategory.map((x) => x.count) }]}
         />
       </Box>
@@ -1619,6 +1607,7 @@ function OverviewCharts({ data, systems }) {
       </Box>
       <Box>
         <Chart
+          key={donutData.labels.join("|")}
           type="donut"
           height={300}
           options={donutChartOptions(donutData.labels, "Distribuição por categoria")}
@@ -1629,7 +1618,7 @@ function OverviewCharts({ data, systems }) {
         <Chart
           type="heatmap"
           height={300}
-          options={heatmapChartOptions(trendBySys.labels, "Volume por sistema × mês (últimos 6m)")}
+          options={heatmapChartOptions(trendBySys.labels, "Volume por sistema × mês (6 meses)")}
           series={trendBySys.series}
         />
       </Box>
@@ -1867,13 +1856,17 @@ function DashboardApp() {
     return cards.sort((a, b) => b.val.tickets.length - a.val.tickets.length);
   }, [periodData, data, filteredSystems, filters, analyses, analysesNorm]);
 
-  const totalTickets = useMemo(() => {
-    let t = 0;
-    filteredSystems.forEach((s) =>
-      Object.values(periodData[s] || {}).forEach((v) => (t += v.tickets.length))
-    );
-    return t;
-  }, [periodData, filteredSystems]);
+  // Contagens do topo: os mesmos cartões filtrados (período + categoria + prioridade)
+  const totalTickets = useMemo(
+    () => filteredCards.reduce((acc, c) => acc + c.val.tickets.length, 0),
+    [filteredCards]
+  );
+
+  // Fim das linhas do tempo: o mês escolhido no filtro, ou o chamado mais recente
+  const refTendencia = useMemo(
+    () => (periodoMes ? new Date(periodoMes.fim.getTime() - 1) : anchor),
+    [periodoMes, anchor]
+  );
 
   // Últimos 30 dias x 30 dias anteriores, contados a partir do chamado mais
   // recente da PLANILHA (a mesma referência do filtro de período), e não do mais
@@ -1882,9 +1875,14 @@ function DashboardApp() {
     if (!anchor) return { count: 0, delta: null };
     const c30 = new Date(anchor); c30.setDate(c30.getDate() - 30);
     const c60 = new Date(anchor); c60.setDate(c60.getDate() - 60);
+    // Categorias e prioridade seguem o filtro; os 30 dias são sempre os 30 dias
+    // até o chamado mais recente (é o que o card diz)
+    const catsFiltro = filters.categories;
     let current = 0, previous = 0;
     filteredSystems.forEach((s) => {
-      Object.values(data[s] || {}).forEach((v) => {
+      Object.entries(data[s] || {}).forEach(([cat, v]) => {
+        if (catsFiltro.length > 0 && !catsFiltro.includes(cat)) return;
+        if (filters.priority && !filteredCards.some((c) => c.sys === s && c.cat === cat)) return;
         v.tickets.forEach((t) => {
           if (t.date >= c30) current++;
           else if (t.date >= c60) previous++;
@@ -1892,7 +1890,7 @@ function DashboardApp() {
       });
     });
     return { count: current, delta: percentChange(current, previous) };
-  }, [data, filteredSystems, anchor]);
+  }, [data, filteredSystems, anchor, filters.categories, filters.priority, filteredCards]);
 
   const analysedCount = useMemo(
     () => filteredCards.filter((c) => c.analysis).length,
@@ -2664,7 +2662,7 @@ function DashboardApp() {
             </TabPanel>
 
             <TabPanel px="0">
-              <OverviewCharts data={periodData} systems={SYSTEMS} />
+              <OverviewCharts cards={filteredCards} systems={SYSTEMS} refData={refTendencia} />
             </TabPanel>
 
             <TabPanel px="0">
@@ -2696,6 +2694,7 @@ function DashboardApp() {
                         analysis={analysis}
                         anchor={anchor}
                         periodDays={periodDays}
+                        refTendencia={refTendencia}
                         isLoading={!!loadingKeys[key]}
                         onRequestAnalysis={(dias) => requestAnalysis(sys, cat, dias)}
                       />
