@@ -45,9 +45,22 @@ import TabelaReincidencia, { exportarExcel, nivelDe, CORES_GRUPO, DESCRICAO_GRUP
 
 const SHEETS_API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 
-// Senha única de acesso ao dashboard. Configure VITE_ACCESS_PASSWORD no .env / Vercel.
-// Se ficar vazia, o dashboard abre sem pedir senha (útil para desenvolvimento local).
-const ACCESS_PASSWORD = import.meta.env.VITE_ACCESS_PASSWORD || "";
+// A senha de acesso é conferida no servidor (/api/login). Depois do login ela
+// fica no sessionStorage e vai no header de toda chamada às APIs do site.
+const AUTH_STORAGE_KEY = "vivo-dashboard-auth";
+function lerSenhaSalva() {
+  try { return sessionStorage.getItem(AUTH_STORAGE_KEY) || ""; } catch (_) { return ""; }
+}
+function authHeaders(extra = {}) {
+  const senha = lerSenhaSalva();
+  return { ...extra, ...(senha ? { "x-publish-token": senha } : {}) };
+}
+// Senha recusada pelo servidor (trocada ou inválida): limpa e volta ao login.
+function voltarAoLoginSe401(res) {
+  if (res.status !== 401) return;
+  try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (_) { /* ignora */ }
+  window.location.reload();
+}
 const SPREADSHEET_ID = import.meta.env.VITE_SPREADSHEET_ID || "1Ne5pMhMk0eXnZt9n6whQJi2BD9weUTo40INFHK5zUus";
 
 // Configuração por modo — cada modo tem sua própria chave Gemini e aba da planilha.
@@ -399,7 +412,7 @@ async function callGemini(promptText, _unusedKey, maxTokens = 4096, injectFly = 
     try {
       response = await fetch(ANALYZE_ENDPOINT, {
         method:  "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body:    JSON.stringify({ prompt: promptText, maxTokens, injectFly }),
         signal:  controller.signal,
       });
@@ -414,6 +427,7 @@ async function callGemini(promptText, _unusedKey, maxTokens = 4096, injectFly = 
         : `Erro de rede ao chamar a IA: ${err.message}`);
     }
     clearTimeout(timeoutId);
+    voltarAoLoginSe401(response);
 
     const data = await response.json();
 
@@ -1685,7 +1699,8 @@ function clearStoredAnalyses(mode) {
 // Lê a análise compartilhada do modo. Retorna { analyses, atualizadoEm } ou null.
 async function fetchSharedAnalyses(mode) {
   try {
-    const res = await fetch(`${GET_ANALYSIS_ENDPOINT}?modo=${encodeURIComponent(mode)}`);
+    const res = await fetch(`${GET_ANALYSIS_ENDPOINT}?modo=${encodeURIComponent(mode)}`, { headers: authHeaders() });
+    voltarAoLoginSe401(res);
     if (!res.ok) return null;
     const data = await res.json();
     return { analyses: data.analyses || {}, atualizadoEm: data.atualizadoEm || null };
@@ -1698,9 +1713,10 @@ async function fetchSharedAnalyses(mode) {
 async function publishSharedAnalyses(mode, analyses) {
   const res = await fetch(SAVE_ANALYSIS_ENDPOINT, {
     method:  "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body:    JSON.stringify({ modo: mode, analyses }),
   });
+  voltarAoLoginSe401(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error || `Erro ao publicar (${res.status})`);
@@ -2613,7 +2629,7 @@ function DashboardApp() {
                 </MenuItem>
               </MenuList>
             </Menu>
-            {ACCESS_PASSWORD && (
+            {lerSenhaSalva() && (
               <Button size="sm" variant="ghost" borderRadius="lg" color="white" _hover={{ bg: "whiteAlpha.200" }}
                 onClick={() => {
                   try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (_) { /* ignora */ }
@@ -2788,28 +2804,40 @@ async function carregarSistemaPainel(mode) {
 // =============================================================================
 // TELA DE LOGIN + WRAPPER DE AUTENTICAÇÃO
 //
-// Protege o dashboard com uma senha única (VITE_ACCESS_PASSWORD).
-// O acesso liberado fica salvo no navegador (sessionStorage) — a pessoa não
-// precisa digitar a senha a cada ação, só uma vez por sessão do navegador.
+// Protege o dashboard com uma senha única, conferida no servidor (/api/login).
+// A senha fica salva no navegador (sessionStorage) — a pessoa só digita uma vez
+// por sessão — e vai no header das chamadas às APIs (authHeaders).
 // =============================================================================
-
-const AUTH_STORAGE_KEY = "vivo-dashboard-auth";
 
 function LoginScreen({ onLogin }) {
   const [senha, setSenha]   = useState("");
-  const [erro, setErro]     = useState(false);
+  const [erro, setErro]     = useState("");
+  const [enviando, setEnviando] = useState(false);
   const bg      = useColorModeValue("gray.50", "gray.900");
   const cardBg  = useColorModeValue("white", "gray.800");
   const border  = useColorModeValue("gray.200", "gray.700");
 
-  function tentarLogin() {
-    if (senha === ACCESS_PASSWORD) {
-      try { sessionStorage.setItem(AUTH_STORAGE_KEY, "ok"); } catch (_) { /* ignora */ }
-      onLogin();
-    } else {
-      setErro(true);
-      setSenha("");
+  async function tentarLogin() {
+    if (!senha || enviando) return;
+    setEnviando(true);
+    try {
+      const res = await fetch("/api/login", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ senha }),
+      });
+      if (res.ok) {
+        try { sessionStorage.setItem(AUTH_STORAGE_KEY, senha); } catch (_) { /* ignora */ }
+        onLogin();
+        return;
+      }
+      setErro(res.status === 401 ? "Senha incorreta. Tente novamente." : `Erro no servidor (${res.status}).`);
+    } catch (_) {
+      setErro("Não foi possível conferir a senha (sem conexão com o servidor).");
+    } finally {
+      setEnviando(false);
     }
+    setSenha("");
   }
 
   return (
@@ -2833,7 +2861,7 @@ function LoginScreen({ onLogin }) {
                 autoFocus
                 placeholder="Senha de acesso"
                 value={senha}
-                onChange={(e) => { setSenha(e.target.value); setErro(false); }}
+                onChange={(e) => { setSenha(e.target.value); setErro(""); }}
                 onKeyDown={(e) => { if (e.key === "Enter") tentarLogin(); }}
                 style={{
                   width: "100%", padding: "10px 14px", fontSize: "14px",
@@ -2842,11 +2870,11 @@ function LoginScreen({ onLogin }) {
                 }}
               />
               {erro && (
-                <Text fontSize="xs" color="red.500" mt="2">Senha incorreta. Tente novamente.</Text>
+                <Text fontSize="xs" color="red.500" mt="2">{erro}</Text>
               )}
             </Box>
 
-            <Button colorScheme="brand" borderRadius="lg" onClick={tentarLogin} w="full">
+            <Button colorScheme="brand" borderRadius="lg" onClick={tentarLogin} w="full" isLoading={enviando}>
               Entrar
             </Button>
           </VStack>
@@ -2857,13 +2885,20 @@ function LoginScreen({ onLogin }) {
 }
 
 export default function VivoDashboard() {
-  // Se não há senha configurada, libera direto (modo desenvolvimento).
-  // Senão, verifica se já autenticou nesta sessão do navegador.
-  const [autenticado, setAutenticado] = useState(() => {
-    if (!ACCESS_PASSWORD) return true;
-    try { return sessionStorage.getItem(AUTH_STORAGE_KEY) === "ok"; } catch (_) { return false; }
-  });
+  // Já tem senha salva nesta sessão → entra (se ela não valer mais, as APIs
+  // respondem 401). Senão pergunta ao servidor se o site exige senha; sem senha
+  // configurada no servidor, libera direto (modo desenvolvimento).
+  const [autenticado, setAutenticado] = useState(() => lerSenhaSalva() ? true : null);
 
+  useEffect(() => {
+    if (autenticado !== null) return;
+    fetch("/api/login")
+      .then((r) => (r.ok ? r.json() : { exigeSenha: true }))
+      .then((d) => setAutenticado(d.exigeSenha === false))
+      .catch(() => setAutenticado(false));
+  }, [autenticado]);
+
+  if (autenticado === null) return null;
   if (!autenticado) {
     return <LoginScreen onLogin={() => setAutenticado(true)} />;
   }
