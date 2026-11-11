@@ -3,8 +3,8 @@
 //
 // Mostra os sistemas em slides que trocam sozinhos — feito para ficar aberto
 // numa TV ou segunda tela. Para cada sistema selecionado:
-//   1. Resumo         — volume 7/30 dias, chamados por dia e categorias principais
-//   2. Onde atacar    — subtipos mais importantes da análise publicada da IA
+//   1. Resumo         — volume 7/30 dias, chamados por dia e grupos principais
+//   2. Onde atacar    — subcategorias mais importantes da análise publicada da IA, com o grupo
 //   3. Mais recentes  — últimos chamados que entraram na planilha
 //
 // Os dados são recarregados da planilha a cada 5 minutos.
@@ -16,7 +16,10 @@ import {
   Box, Flex, Text, Button, HStack, VStack, Select, Spinner, SimpleGrid,
 } from "@chakra-ui/react";
 import Chart from "react-apexcharts";
-import { subtiposUnicos } from "./classificacao.js";
+import { GRUPOS_REINCIDENCIA } from "./classificacao.js";
+import { CORES_GRUPO } from "./Tabela.jsx";
+
+const corGrupo = (g) => (CORES_GRUPO[g] || CORES_GRUPO["Outros / Diversos"])[0];
 
 const ATUALIZAR_A_CADA_MS = 5 * 60 * 1000;  // recarrega a planilha a cada 5 min
 const PRIORIDADE_ORDEM = { Alta: 0, "Média": 1, Baixa: 2 };
@@ -54,7 +57,7 @@ function nomeCurto(nome) {
 
 // Monta os 3 slides de um sistema
 function montarSlides(modo, dados) {
-  const { tickets, analisePorCategoria } = dados;
+  const { tickets } = dados;
   const ancora = maisRecente(tickets);
   if (!ancora) return [{ tipo: "vazio", modo }];
 
@@ -62,10 +65,11 @@ function montarSlides(modo, dados) {
   const c30 = diasAntes(ancora, 30), c60 = diasAntes(ancora, 60);
   const ult30 = tickets.filter((t) => t.date >= c30);
 
-  // Chamados por categoria nos últimos 30 dias
-  const porCat = {};
-  ult30.forEach((t) => { porCat[t.category] = (porCat[t.category] || 0) + 1; });
-  const categorias = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  // Chamados por GRUPO da reincidência nos últimos 30 dias
+  const porGrupo = {};
+  ult30.forEach((t) => { porGrupo[t.grupo] = (porGrupo[t.grupo] || 0) + 1; });
+  const grupos = GRUPOS_REINCIDENCIA.filter((g) => porGrupo[g]).map((g) => [g, porGrupo[g]])
+    .sort((a, b) => b[1] - a[1]);
 
   // Chamados por dia (30 dias)
   const dias = Array.from({ length: 30 }, (_, i) => {
@@ -82,21 +86,25 @@ function montarSlides(modo, dados) {
     tipo: "resumo", modo, ancora,
     sete:   { atual: contarEntre(tickets, c7, ancora),  anterior: tickets.filter((t) => t.date >= c14 && t.date < c7).length },
     trinta: { atual: contarEntre(tickets, c30, ancora), anterior: tickets.filter((t) => t.date >= c60 && t.date < c30).length },
-    categoriasAtivas: categorias.length,
-    topCategorias: categorias.slice(0, 6),
+    gruposAtivos: grupos.length,
+    topGrupos: grupos.slice(0, 6),
     diasLabels: dias.map((d) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })),
     porDia,
   };
 
-  // Subtipos da análise publicada, das categorias ativas nos últimos 30 dias
-  const subtipos = [];
-  categorias.forEach(([cat]) => {
-    const an = analisePorCategoria(cat);
-    subtiposUnicos(an?.subcategorias).forEach((s) => subtipos.push({
-      nome: nomeCurto(s.nome), categoria: cat, prioridade: s.prioridade,
-      qtd: s.ids?.length || 0, sugestao: s.sugestao || "",
-    }));
+  // Subcategorias da análise publicada com chamados nos últimos 30 dias.
+  // A mesma subcategoria vinda de categorias diferentes conta junto.
+  const ids30 = new Set(ult30.map((t) => String(t.id).replace("#", "").trim()));
+  const porSub = new Map();
+  (dados.subtipos || []).forEach((s) => {
+    const ids = s.ids.filter((id) => ids30.has(id));
+    if (!ids.length) return;
+    const chave = `${s.grupo}::${s.nome}`;
+    const atual = porSub.get(chave);
+    if (atual) atual.qtd += ids.length;
+    else porSub.set(chave, { nome: nomeCurto(s.nome), grupo: s.grupo, prioridade: s.prioridade, qtd: ids.length, sugestao: s.sugestao });
   });
+  const subtipos = [...porSub.values()];
   subtipos.sort((a, b) =>
     (PRIORIDADE_ORDEM[a.prioridade] ?? 3) - (PRIORIDADE_ORDEM[b.prioridade] ?? 3) || b.qtd - a.qtd);
 
@@ -131,13 +139,13 @@ function Numero({ titulo, valor, anterior, grande, T }) {
 }
 
 function SlideResumo({ slide, grande, texto, T }) {
-  const max = Math.max(1, ...slide.topCategorias.map(([, n]) => n));
+  const max = Math.max(1, ...slide.topGrupos.map(([, n]) => n));
   return (
     <Flex direction="column" h="100%" gap={grande ? 8 : 5}>
       <SimpleGrid columns={3} spacing={grande ? 10 : 6}>
         <Numero titulo="Últimos 7 dias"  valor={slide.sete.atual}   anterior={slide.sete.anterior}   grande={grande} T={T} />
         <Numero titulo="Últimos 30 dias" valor={slide.trinta.atual} anterior={slide.trinta.anterior} grande={grande} T={T} />
-        <Numero titulo="Categorias com chamados (30 dias)" valor={slide.categoriasAtivas} grande={grande} T={T} />
+        <Numero titulo="Grupos com chamados (30 dias)" valor={slide.gruposAtivos} grande={grande} T={T} />
       </SimpleGrid>
 
       <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={grande ? 10 : 6} flex="1" minH="0">
@@ -164,16 +172,16 @@ function SlideResumo({ slide, grande, texto, T }) {
           />
         </Box>
         <Box>
-          <Text fontSize={grande ? "2xl" : "md"} fontWeight="700" mb="3">Categorias com mais chamados (30 dias)</Text>
+          <Text fontSize={grande ? "2xl" : "md"} fontWeight="700" mb="3">Grupos com mais chamados (30 dias)</Text>
           <VStack align="stretch" spacing={grande ? 4 : 2.5}>
-            {slide.topCategorias.map(([cat, n]) => (
-              <Box key={cat}>
+            {slide.topGrupos.map(([grupo, n]) => (
+              <Box key={grupo}>
                 <Flex justify="space-between" fontSize={grande ? "2xl" : "md"} mb="1">
-                  <Text fontWeight="600" noOfLines={1}>{cat}</Text>
+                  <Text fontWeight="600" noOfLines={1}>{grupo}</Text>
                   <Text fontWeight="700" color={T.destaque} ml="3">{n}</Text>
                 </Flex>
                 <Box h={grande ? "10px" : "6px"} borderRadius="full" bg={T.barraFundo}>
-                  <Box h="100%" borderRadius="full" bg={T.barra} w={`${(n / max) * 100}%`} />
+                  <Box h="100%" borderRadius="full" bg={corGrupo(grupo)} w={`${(n / max) * 100}%`} />
                 </Box>
               </Box>
             ))}
@@ -198,7 +206,7 @@ function SlideAtacar({ slide, grande, T }) {
               <Text fontSize={grande ? "3xl" : "lg"} fontWeight="800" color={T.destaque} flexShrink={0}>{s.qtd}</Text>
             </Flex>
             <Text fontSize={grande ? "xl" : "sm"} color={T.muted} mb="1">
-              {s.categoria} · prioridade {String(s.prioridade || "—").toLowerCase()}
+              {s.grupo} · prioridade {String(s.prioridade || "—").toLowerCase()}
             </Text>
             {s.sugestao && (
               <Text fontSize={grande ? "xl" : "sm"} noOfLines={2}>{s.sugestao}</Text>
@@ -228,9 +236,10 @@ function SlideRecentes({ slide, grande, T }) {
           <Text fontSize={grande ? "xl" : "sm"} fontFamily="mono" color={T.destaque} w={grande ? "140px" : "90px"} flexShrink={0}>
             {t.id}
           </Text>
-          <Text fontSize={grande ? "xl" : "sm"} fontWeight="700" w={grande ? "280px" : "180px"} flexShrink={0} noOfLines={1}>
-            {t.category}
-          </Text>
+          <Flex align="center" gap="2" w={grande ? "380px" : "250px"} flexShrink={0} minW="0">
+            <Box w={grande ? "12px" : "8px"} h={grande ? "12px" : "8px"} borderRadius="full" flexShrink={0} bg={corGrupo(t.grupo)} />
+            <Text fontSize={grande ? "xl" : "sm"} fontWeight="700" noOfLines={1}>{t.grupo}</Text>
+          </Flex>
           <Text fontSize={grande ? "xl" : "sm"} noOfLines={1} flex="1">{resumoChamado(t.description)}</Text>
           {t.autor && (
             <Text fontSize={grande ? "lg" : "xs"} color={T.muted} w={grande ? "220px" : "120px"} flexShrink={0} noOfLines={1} textAlign="right">
