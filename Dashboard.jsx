@@ -2762,9 +2762,24 @@ async function carregarSistemaPainel(mode) {
     const cat = key.split("::").slice(1).join("::");
     idx[normCatKey(cat)] = val;
   });
-  const tickets = Object.values(categorias).flatMap((c) => c.tickets);
+  // Grupo da reincidência de cada chamado (da análise publicada; sem análise,
+  // deduzido pela categoria) e os subtipos da análise com o grupo de cada um
+  const info = new Map();
+  const subtipos = [];
+  Object.entries(analises).forEach(([key, an]) => {
+    const cat = key.split("::").slice(1).join("::");
+    subtiposUnicos(an?.subcategorias).forEach((sub) => {
+      const grupo = resolverGrupo(sub, cat);
+      sub.ids.forEach((id) => info.set(id, grupo));
+      subtipos.push({ nome: sub.nome, grupo, prioridade: sub.prioridade || null, sugestao: sub.sugestao || "", ids: sub.ids });
+    });
+  });
+  const tickets = Object.entries(categorias).flatMap(([cat, c]) => c.tickets.map((t) => ({
+    ...t, grupo: info.get(String(t.id).replace("#", "").trim()) || grupoPadrao(cat),
+  })));
   return {
     tickets,
+    subtipos,
     analisePorCategoria: (cat) => idx[normCatKey(cat)] || null,
     analisePublicadaEm: shared?.atualizadoEm || null,
   };
