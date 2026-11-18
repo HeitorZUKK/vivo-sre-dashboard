@@ -18,6 +18,7 @@ import {
 import Chart from "react-apexcharts";
 import { GRUPOS_REINCIDENCIA } from "./classificacao.js";
 import { CORES_GRUPO } from "./Tabela.jsx";
+import { SimboloReincidencia } from "./Marca.jsx";
 
 const corGrupo = (g) => (CORES_GRUPO[g] || CORES_GRUPO["Outros / Diversos"])[0];
 
@@ -155,9 +156,9 @@ function SlideResumo({ slide, grande, texto, T }) {
             type="bar"
             height={grande ? 520 : 260}
             options={{
-              chart: { toolbar: { show: false }, fontFamily: "Inter, sans-serif", animations: { enabled: false } },
+              chart: { toolbar: { show: false }, fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif", animations: { enabled: false } },
               plotOptions: { bar: { borderRadius: 3, columnWidth: "70%" } },
-              colors: ["#2C98A5"],
+              colors: ["#09A5C1"],
               dataLabels: { enabled: false },
               xaxis: {
                 categories: slide.diasLabels,
@@ -372,19 +373,21 @@ export default function Painel({ modos, carregar, modoTV = false }) {
       display="flex"
       flexDirection="column"
       overflow="hidden"
-      fontFamily="'Inter', sans-serif"
       outline="none"
     >
       {/* Barra superior: título + controles */}
       <Flex px={grande ? 10 : 5} pt={grande ? 6 : 4} pb="3" align="center" justify="space-between" gap="4" wrap="wrap">
-        <Box minW="0">
-          <Text fontSize={grande ? "lg" : "sm"} color={T.muted} fontWeight="600">
-            {atual ? `${atual.label} · ${(idx % total) + 1} de ${total}` : "Painel"}
-          </Text>
-          <Text fontSize={grande ? "4xl" : "2xl"} fontWeight="800" lineHeight="1.2">
-            {atual ? TITULO_SLIDE[atual.tipo] : "Carregando"}
-          </Text>
-        </Box>
+        <Flex align="center" gap={grande ? 5 : 3} minW="0">
+          {grande && <SimboloReincidencia size={64} title="Reincidência" />}
+          <Box minW="0">
+            <Text fontSize={grande ? "lg" : "sm"} color={T.muted} fontWeight="600">
+              {atual ? `${atual.label} · ${(idx % total) + 1} de ${total}` : "Painel"}
+            </Text>
+            <Text fontFamily="heading" fontSize={grande ? "4xl" : "2xl"} fontWeight="700" lineHeight="1.2">
+              {atual ? TITULO_SLIDE[atual.tipo] : "Carregando"}
+            </Text>
+          </Box>
+        </Flex>
 
         <HStack spacing="2" wrap="wrap">
           {modos.length > 1 && (

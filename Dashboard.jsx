@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 
 // Logo da Zukk (palavra "ZUKK" sobre o azul-marinho da marca), embutida em base64
-const LOGO_ZUKK = "data:image/png;base64,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";
+import { AssinaturaReincidencia, LOGO_ZUKK_BRANCO, SimboloReincidencia, DEGRADE_MARCA, MARCA } from "./Marca.jsx";
 import {
   Box, Flex, Heading, Text, Button, Select,
   Badge, Divider, Spinner, useColorModeValue,
@@ -839,11 +839,11 @@ function percentChange(current, previous) {
 
 const CHART_COLORS = [
   // Cores da marca primeiro (turquesa e azul-marinho), depois cores de apoio
-  "#2C98A5", "#04142E", "#58C8D8", "#5A6A8E",
-  "#F59E0B", "#EF4444", "#16A34A", "#A3E2EB", "#1B6670",
+  "#09A5C1", "#001E3B", "#34EACD", "#951ABE",
+  "#F59E0B", "#EF4444", "#16A34A", "#D85DFB", "#066C7E",
 ];
 
-const BASE_CHART_CONFIG = { toolbar: { show: false }, fontFamily: "Inter, sans-serif" };
+const BASE_CHART_CONFIG = { toolbar: { show: false }, fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" };
 
 function barChartOptions(categories, title, color = CHART_COLORS[0]) {
   return {
@@ -2360,7 +2360,7 @@ function DashboardApp() {
     const qtdPrioridade = (p) => todosSubs.filter((sub) => sub.prioridade === p).length;
     const geradoEm      = new Date().toLocaleString("pt-BR");
 
-    const COR = { navy: "#04142E", turquesa: "#2C98A5", turquesaClaro: "#58C8D8", texto: "#1F2937", cinza: "#6B7280", borda: "#E5E7EB" };
+    const COR = { navy: "#001E3B", turquesa: "#09A5C1", turquesaClaro: "#34EACD", texto: "#1F2937", cinza: "#6B7280", borda: "#E5E7EB" };
     const priorityColor = { Alta: "#DC2626", "Média": "#D97706", Baixa: "#16A34A" };
 
     // Tabela-resumo com todas as categorias do período
@@ -2410,17 +2410,17 @@ function DashboardApp() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Relatório de Reincidência - ${esc(sys)} - ${esc(periodoLabel)}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', sans-serif; background: #fff; color: ${COR.texto}; padding: 32px; max-width: 900px; margin: 0 auto; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #fff; color: ${COR.texto}; padding: 32px; max-width: 900px; margin: 0 auto; }
     @media print { body { padding: 0; } .no-print { display: none !important; } @page { margin: 1.5cm; size: A4; }
       .capa { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
 </head>
 <body>
   <div class="no-print" style="margin-bottom:20px;display:flex;gap:10px;">
-    <button onclick="window.print()" style="background:${COR.turquesa};color:#fff;border:none;padding:10px 20px;border-radius:8px;font:600 14px Inter,sans-serif;cursor:pointer;">Salvar como PDF</button>
-    <button onclick="window.close()" style="background:#F3F4F6;color:#374151;border:none;padding:10px 20px;border-radius:8px;font:14px Inter,sans-serif;cursor:pointer;">Fechar</button>
+    <button onclick="window.print()" style="background:${COR.turquesa};color:#fff;border:none;padding:10px 20px;border-radius:8px;font:600 14px Poppins,sans-serif;cursor:pointer;">Salvar como PDF</button>
+    <button onclick="window.close()" style="background:#F3F4F6;color:#374151;border:none;padding:10px 20px;border-radius:8px;font:14px Helvetica,Arial,sans-serif;cursor:pointer;">Fechar</button>
   </div>
 
   <div class="capa" style="background:${COR.navy};color:#fff;border-radius:12px;padding:24px 28px;margin-bottom:24px;">
@@ -2555,16 +2555,13 @@ function DashboardApp() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <Box minH="100vh" bg={bg} fontFamily="'Inter', sans-serif">
+    <Box minH="100vh" bg={bg}>
 
       {/* HEADER */}
-      <Box bg="navy.900" color="white" px="6" py="3" position="sticky" top="0" zIndex="100" shadow="md">
+      <Box bg="navy.900" color="white" px="6" py="3" position="sticky" top="0" zIndex="100" shadow="md"
+        sx={{ borderBottom: "3px solid", borderImage: `${DEGRADE_MARCA} 1` }}>
         <Flex align="center" justify="space-between" gap="4" wrap="wrap">
-          <HStack spacing="3">
-            <img src={LOGO_ZUKK} alt="Zukk" style={{ height: "30px", width: "auto" }} />
-            <Box w="1px" h="8" bg="whiteAlpha.300" />
-            <Box>
-              <Text fontWeight="700" fontSize="lg" lineHeight="1.2">Dashboard Reincidência</Text>
+          <AssinaturaReincidencia altura={28}>
               <Flex align="center" gap="1.5" mt="0.5" fontSize="12px" color="navy.100" wrap="wrap">
                 {sheetLoading ? (
                   <>
@@ -2573,7 +2570,7 @@ function DashboardApp() {
                   </>
                 ) : anchor ? (
                   <>
-                    <Box w="6px" h="6px" borderRadius="full" bg="brand.400" />
+                    <Box w="6px" h="6px" borderRadius="full" bg="agua.400" />
                     <Text>Chamados até {anchor.toLocaleDateString("pt-BR")}</Text>
                   </>
                 ) : (
@@ -2583,22 +2580,21 @@ function DashboardApp() {
                   <Text>· análise publicada em {new Date(sharedUpdatedAt).toLocaleDateString("pt-BR")}</Text>
                 )}
               </Flex>
-            </Box>
-          </HStack>
+          </AssinaturaReincidencia>
 
-          <HStack spacing="2">
-            <Button size="sm" variant="outline" borderRadius="lg" color="white" borderColor="whiteAlpha.500"
+          <HStack spacing="2" wrap="wrap">
+            <Button size="sm" variant="outline" borderRadius="full" color="white" borderColor="whiteAlpha.500"
               _hover={{ bg: "whiteAlpha.200" }} _active={{ bg: "whiteAlpha.300" }}
               isLoading={sheetLoading} loadingText="Atualizando"
               onClick={() => loadSheetData()}>
               Atualizar dados
             </Button>
-            <Button size="sm" variant="outline" borderRadius="lg" color="white" borderColor="whiteAlpha.500"
+            <Button size="sm" variant="outline" borderRadius="full" color="white" borderColor="whiteAlpha.500"
               _hover={{ bg: "whiteAlpha.200" }} _active={{ bg: "whiteAlpha.300" }} onClick={downloadReport}>
               Exportar relatório
             </Button>
             <Menu>
-              <MenuButton as={Button} size="sm" colorScheme="brand" borderRadius="lg"
+              <MenuButton as={Button} size="sm" colorScheme="brand" borderRadius="full"
                 isLoading={bulkLoading || publishing} loadingText={bulkLoading ? "Analisando" : "Publicando"}
                 rightIcon={<IconChevron />}>
                 Ações da IA
@@ -2630,7 +2626,7 @@ function DashboardApp() {
               </MenuList>
             </Menu>
             {lerSenhaSalva() && (
-              <Button size="sm" variant="ghost" borderRadius="lg" color="white" _hover={{ bg: "whiteAlpha.200" }}
+              <Button size="sm" variant="ghost" borderRadius="full" color="white" _hover={{ bg: "whiteAlpha.200" }}
                 onClick={() => {
                   try { sessionStorage.removeItem(AUTH_STORAGE_KEY); } catch (_) { /* ignora */ }
                   window.location.reload();
@@ -2841,13 +2837,14 @@ function LoginScreen({ onLogin }) {
   }
 
   return (
-    <Box minH="100vh" bg="navy.900" display="flex" alignItems="center" justifyContent="center" fontFamily="'Inter', sans-serif" px="4">
+    <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" px="4"
+      bg="radial-gradient(ellipse 60% 70% at 100% 0%, rgba(149,26,190,0.45), transparent 60%), radial-gradient(ellipse 55% 60% at 0% 15%, rgba(9,165,193,0.40), transparent 60%), #000000">
       <Card bg={cardBg} borderWidth="1px" borderColor={border} borderRadius="2xl" shadow="lg" maxW="380px" w="full">
         <CardBody p="8">
           <VStack spacing="5" align="stretch">
             <VStack spacing="2">
               <Box bg="navy.900" borderRadius="lg" px="5" py="3">
-                <img src={LOGO_ZUKK} alt="Zukk" style={{ height: "36px", width: "auto" }} />
+                <AssinaturaReincidencia altura={24} />
               </Box>
               <Heading size="md" textAlign="center">Dashboard Reincidência</Heading>
               <Text fontSize="sm" color="gray.500" textAlign="center">

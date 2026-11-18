@@ -5,39 +5,41 @@ import VivoDashboard from './Dashboard.jsx'
 
 const theme = extendTheme({
   fonts: {
-    heading: `'Inter', sans-serif`,
-    body: `'Inter', sans-serif`,
+    // Manual ZUKK: Poppins nos títulos, Helvetica no texto
+    heading: `'Poppins', sans-serif`,
+    body: `'Helvetica Neue', Helvetica, Arial, sans-serif`,
   },
   config: {
     initialColorMode: 'light',
     useSystemColorMode: false,
   },
-  // Cores da marca Zukk: turquesa (logo) e azul-marinho (fundo da marca)
+  // Cores do manual ZUKK: azul #09A5C1 (brand.500) e azul-marinho #001E3B (navy.900)
   colors: {
     brand: {
-      50:  '#E9F8FA',
-      100: '#CBEFF4',
-      200: '#A3E2EB',
-      300: '#7AD5E1',
-      400: '#58C8D8',
-      500: '#2C98A5',
-      600: '#23808C',
-      700: '#1B6670',
-      800: '#134C54',
-      900: '#0B3338',
+      50:  '#E6F8FB',
+      100: '#C0EDF4',
+      200: '#8FDFEB',
+      300: '#5CCFE0',
+      400: '#2EBDD3',
+      500: '#09A5C1',
+      600: '#0889A0',
+      700: '#066C7E',
+      800: '#04505D',
+      900: '#02343C',
     },
     navy: {
-      50:  '#E7EAF0',
-      100: '#C3CAD8',
-      200: '#8E9AB3',
-      300: '#5A6A8E',
-      400: '#34466F',
-      500: '#1A2D55',
-      600: '#0F2245',
-      700: '#0A1B3A',
-      800: '#071733',
-      900: '#04142E',
+      50:  '#EAF0F5',
+      100: '#CFDCE7',
+      200: '#9CB5CC',
+      300: '#6A90B3',
+      400: '#3B6D9A',
+      500: '#1A5385',
+      600: '#0B406F',
+      700: '#06325A',
+      800: '#022749',
+      900: '#001E3B',
     },
+    agua: { 400: '#34EACD' },
   },
 })
 
